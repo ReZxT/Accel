@@ -544,8 +544,13 @@ function finalizeStreamingMessage(msgEl, text, thinking, save = true) {
       <div class="thinking-content" id="${thinkId}">${escapeHtml(thinking)}</div>
     </div>` : '';
 
+  // preserve screenshot gallery before innerHTML wipe
+  const galleryEl = msgEl.querySelector('.screenshot-gallery');
+  const galleryHtml = galleryEl ? galleryEl.outerHTML : '';
+
   msgEl.querySelector('.message-body').innerHTML = `
     ${thinkingHtml}
+    ${galleryHtml}
     <div class="message-content">${formatContent(text)}</div>
     <div class="message-meta">
       <span>${formatTimestamp(getTimestamp())}</span>
