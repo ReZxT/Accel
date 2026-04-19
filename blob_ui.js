@@ -19,7 +19,10 @@ let pendingImages = []; // Array of { base64, name, size, file }
 let pendingFiles = [];  // Array of { content, name, size, language }
 
 // ===================== INIT =====================
+const UI_VERSION = '202604191200';
+
 document.addEventListener('DOMContentLoaded', () => {
+  debugLog(`UI version: ${UI_VERSION}`, 'info');
   loadSettings();
   setupTextarea();
   setupImageInput();   
