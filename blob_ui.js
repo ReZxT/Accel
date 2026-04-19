@@ -581,7 +581,7 @@ function renderMessage(role, content, timestamp, save = true, images = [], files
 
   const msgDiv = document.createElement('div');
   msgDiv.className = `message ${role}`;
-  const avatar = role === 'user' ? '👤' : '';
+  const avatar = '';
 
   // Images HTML
   let imagesHtml = '';
@@ -690,7 +690,7 @@ function showTypingIndicator() {
   typing.className = 'typing-indicator';
   typing.id = 'typingIndicator';
   typing.innerHTML = `
-    <div class="message-avatar" style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#f97316,#ef4444);display:grid;place-items:center;animation:miniBlobMorph 4s ease-in-out infinite;"></div>
+    <div class="message-avatar" style="background:linear-gradient(135deg,#f97316,#ea580c);animation:miniBlobMorph 3s ease-in-out infinite;"></div>
     <div class="typing-dots"><span></span><span></span><span></span></div>
   `;
   container.appendChild(typing);
