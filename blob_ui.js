@@ -49,15 +49,25 @@ function loadSettings() {
 }
 
 const TOOL_LABELS = {
-  bash: { label: 'bash', desc: 'Shell command execution' },
-  write_file: { label: 'write_file', desc: 'Create or overwrite files' },
-  edit_file: { label: 'edit_file', desc: 'Edit existing files' },
-  read_file: { label: 'read_file', desc: 'Read file contents' },
-  search_files: { label: 'search_files', desc: 'Search by name or content' },
-  list_dir: { label: 'list_dir', desc: 'List directory contents' },
-  search_web: { label: 'search_web', desc: 'Web search via SearXNG' },
-  fetch_url: { label: 'fetch_url', desc: 'Fetch and read a URL' },
-  screenshot_url: { label: 'screenshot_url', desc: 'Screenshot a web page' },
+  bash:                 { label: 'bash',                 desc: 'Shell command execution',           irreversible: true },
+  write_file:           { label: 'write_file',           desc: 'Create or overwrite files',         irreversible: true },
+  edit_file:            { label: 'edit_file',            desc: 'Edit existing files',               irreversible: true },
+  delete_file:          { label: 'delete_file',          desc: 'Delete a file',                     irreversible: true },
+  move_file:            { label: 'move_file',            desc: 'Move or rename a file',             irreversible: true },
+  read_file:            { label: 'read_file',            desc: 'Read file contents',                irreversible: false },
+  get_file_info:        { label: 'get_file_info',        desc: 'File metadata and permissions',     irreversible: false },
+  search_files:         { label: 'search_files',         desc: 'Search by name or content',         irreversible: false },
+  list_dir:             { label: 'list_dir',             desc: 'List directory contents',           irreversible: false },
+  search_web:           { label: 'search_web',           desc: 'Web search via SearXNG',            irreversible: false },
+  fetch_url:            { label: 'fetch_url',            desc: 'Fetch and read a URL',              irreversible: false },
+  screenshot_url:       { label: 'screenshot_url',       desc: 'Screenshot a web page',             irreversible: false },
+  calculate:            { label: 'calculate',            desc: 'Evaluate a math expression',        irreversible: false },
+  calendar_today:       { label: 'calendar_today',       desc: 'Get today\'s calendar info',        irreversible: false },
+  calendar_get_events:  { label: 'calendar_get_events',  desc: 'Get events and holidays',           irreversible: false },
+  calendar_add_event:   { label: 'calendar_add_event',   desc: 'Add a calendar event',              irreversible: true },
+  calendar_delete_event:{ label: 'calendar_delete_event',desc: 'Delete a calendar event',           irreversible: true },
+  convert_units:        { label: 'convert_units',        desc: 'Convert physical units',            irreversible: false },
+  convert_currency:     { label: 'convert_currency',     desc: 'Convert currencies (live rates)',   irreversible: false },
 };
 
 let _toolSettings = {};
@@ -76,8 +86,9 @@ async function loadToolSettings() {
 function renderToolSettings() {
   const container = document.getElementById('toolSettingsList');
   if (!container) return;
-  container.innerHTML = Object.entries(TOOL_LABELS).map(([key, { label, desc }]) => {
-    const policy = _toolSettings[key] || (key === 'bash' || key === 'write_file' || key === 'edit_file' ? 'require' : 'auto');
+  container.innerHTML = Object.entries(TOOL_LABELS).map(([key, info]) => {
+    const { label, desc } = info;
+    const policy = _toolSettings[key] || (info.irreversible ? 'require' : 'auto');
     return `
       <div class="tool-setting-row">
         <div class="tool-setting-info">
@@ -220,22 +231,25 @@ async function indexVault() {
   const btn = document.getElementById('vaultBtn');
   const status = document.getElementById('vaultBtnStatus');
   btn.disabled = true;
-  status.textContent = '⏳';
+  status.innerHTML = '<span class="kb-spinner"></span>';
 
   try {
     const resp = await fetch(`${getSplitterBase()}/ingest/vault`, { method: 'POST' });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-      status.textContent = '❌';
+      status.textContent = 'Failed';
       setTimeout(() => { status.textContent = ''; }, 4000);
     } else {
       const result = await resp.json();
       const errCount = result.errors?.length || 0;
-      status.textContent = errCount ? `✅ ${result.ingested}/${result.total_files} (${errCount} err)` : `✅ ${result.ingested}/${result.total_files}`;
-      setTimeout(() => { status.textContent = ''; }, 4000);
+      const pct = result.total_files ? Math.round(result.ingested / result.total_files * 100) : 100;
+      status.textContent = errCount
+        ? `${pct}% — ${result.ingested}/${result.total_files} (${errCount} err)`
+        : `${pct}% — ${result.ingested} notes indexed`;
+      setTimeout(() => { status.textContent = ''; }, 5000);
     }
   } catch (e) {
-    status.textContent = '❌';
+    status.textContent = 'Failed';
     setTimeout(() => { status.textContent = ''; }, 4000);
   } finally {
     btn.disabled = false;
@@ -252,18 +266,19 @@ async function ingestFiles(fileList) {
 
   const progressArea = document.getElementById('kbProgressArea');
   const progressList = document.getElementById('kbProgressList');
+  const progressHeader = document.getElementById('kbProgressHeader');
   progressArea.style.display = 'block';
   progressList.innerHTML = '';
+  if (progressHeader) progressHeader.textContent = `0 / ${files.length} (0%)`;
 
   const splitterBase = getSplitterBase();
+  let done = 0, succeeded = 0, totalChunks = 0;
+  const validFiles = files.filter(f => ['pdf','epub','txt','md','rst'].includes(f.name.split('.').pop().toLowerCase()));
 
-  for (const file of files) {
-    const ext = file.name.split('.').pop().toLowerCase();
-    if (!['pdf', 'epub', 'txt', 'md', 'rst'].includes(ext)) continue;
-
+  for (const file of validFiles) {
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85em';
-    row.innerHTML = `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${file.name}">${file.name}</span><span class="kb-status">⏳ reading…</span>`;
+    row.className = 'kb-file-row';
+    row.innerHTML = `<span class="kb-file-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span><span class="kb-status">Reading…</span>`;
     progressList.appendChild(row);
     const statusEl = row.querySelector('.kb-status');
 
@@ -271,39 +286,46 @@ async function ingestFiles(fileList) {
       const arrayBuf = await file.arrayBuffer();
       const bytes = new Uint8Array(arrayBuf);
       let binary = '';
-      for (let i = 0; i < bytes.length; i += 8192) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-      }
+      for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
       const b64 = btoa(binary);
 
-      statusEl.textContent = '⏳ ingesting…';
+      statusEl.textContent = 'Ingesting…';
 
       const resp = await fetch(`${splitterBase}/ingest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          base64: b64,
-          filename: file.name,
-          source_type: sourceType,
-          title: title || undefined,
-          author: author || undefined,
-        }),
+        body: JSON.stringify({ base64: b64, filename: file.name, source_type: sourceType, title: title || undefined, author: author || undefined }),
       });
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-        statusEl.textContent = `❌ ${err.detail || resp.statusText}`;
-        continue;
+        statusEl.textContent = `Failed: ${err.detail || resp.statusText}`;
+        statusEl.style.color = 'var(--error)';
+      } else {
+        const result = await resp.json();
+        totalChunks += result.chunks_stored || 0;
+        succeeded++;
+        statusEl.textContent = `${result.chunks_stored} chunks`;
+        statusEl.style.color = 'var(--success)';
       }
-
-      const result = await resp.json();
-      statusEl.textContent = `✅ ${result.chunks_stored} chunks`;
     } catch (e) {
-      statusEl.textContent = `❌ ${e.message}`;
+      statusEl.textContent = `Error: ${e.message}`;
+      statusEl.style.color = 'var(--error)';
     }
+
+    done++;
+    const pct = Math.round(done / validFiles.length * 100);
+    if (progressHeader) progressHeader.textContent = `${done} / ${validFiles.length} (${pct}%)`;
   }
 
-  // Clear optional fields after batch
+  // summary row
+  if (validFiles.length > 0) {
+    const summary = document.createElement('div');
+    summary.className = 'kb-summary';
+    summary.textContent = `Done — ${succeeded}/${validFiles.length} files, ${totalChunks} total chunks`;
+    progressList.appendChild(summary);
+  }
+
   document.getElementById('kbTitle').value = '';
   document.getElementById('kbAuthor').value = '';
 }

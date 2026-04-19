@@ -467,7 +467,63 @@ select.glass-input option {
 .settings-tools {
   display: flex;
   gap: 8px;
+  justify-content: space-between;
   flex-wrap: wrap;
+}
+
+.settings-tools-left,
+.settings-tools-right {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+#vaultBtnStatus {
+  font-size: 0.75rem;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+.kb-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: var(--text-secondary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.kb-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+}
+
+.kb-file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.kb-status {
+  font-size: 0.78rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.kb-summary {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--glass-border);
+  font-size: 0.82rem;
+  color: var(--success);
 }
 
 .tool-btn {
