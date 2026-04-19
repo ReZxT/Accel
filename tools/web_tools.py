@@ -66,6 +66,18 @@ async def fetch_url(url: str) -> str:
 async def screenshot_url(url: str, full_page: bool = False) -> dict:
     """Take a screenshot of a web page. Returns image dict for vision model."""
     try:
+        async with httpx.AsyncClient(follow_redirects=True) as probe:
+            pr = await probe.head(
+                url,
+                timeout=8,
+                headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"},
+            )
+            if pr.status_code >= 400:
+                return {"__type": "error", "text": f"URL returned {pr.status_code} — check the address and try again."}
+    except Exception as e:
+        return {"__type": "error", "text": f"URL unreachable: {e} — check the address and try again."}
+
+    try:
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 f"{PLAYWRIGHT_URL}/screenshot",
