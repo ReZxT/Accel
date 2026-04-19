@@ -424,7 +424,6 @@ function createStreamingMessage() {
     <div class="message-body">
       <div class="thinking-stream" style="display:none"></div>
       <div class="tool-activity"></div>
-      <div class="screenshot-gallery" style="display:none"></div>
       <div class="message-content"></div>
     </div>`;
   container.appendChild(msgDiv);
@@ -446,32 +445,19 @@ function appendToolCall(msgEl, toolName, args) {
 }
 
 function appendToolResult(msgEl, toolName, output, imageB64 = null, imageMime = 'image/png') {
+  const area = msgEl.querySelector('.tool-activity');
+  if (!area) return;
   if (imageB64) {
-    // Images go into the screenshot gallery between tool activity and response
-    const gallery = msgEl.querySelector('.screenshot-gallery');
-    if (gallery) {
-      if (gallery.style.display === 'none' || !gallery.style.display) {
-        gallery.style.display = 'flex';
-        const label = document.createElement('div');
-        label.className = 'screenshot-gallery-label';
-        label.textContent = 'Screenshots';
-        gallery.appendChild(label);
-      }
-      const img = document.createElement('img');
-      img.src = `data:${imageMime};base64,${imageB64}`;
-      img.alt = 'Screenshot';
-      img.className = 'screenshot-preview';
-      img.onclick = () => viewImage(img.src);
-      gallery.appendChild(img);
-    }
-    // Also add a small note in tool activity
-    const area = msgEl.querySelector('.tool-activity');
-    if (area) {
-      const note = document.createElement('div');
-      note.className = 'tool-result-block';
-      note.innerHTML = `<div class="tool-block-header">📸 <strong>${escapeHtml(toolName)}</strong> — screenshot captured</div>`;
-      area.appendChild(note);
-    }
+    const block = document.createElement('div');
+    block.className = 'tool-result-block screenshot-result';
+    const img = document.createElement('img');
+    img.src = `data:${imageMime};base64,${imageB64}`;
+    img.alt = 'Screenshot';
+    img.className = 'screenshot-preview';
+    img.onclick = () => viewImage(img.src);
+    block.innerHTML = `<div class="tool-block-header">📸 <strong>${escapeHtml(toolName)}</strong> — screenshot</div>`;
+    block.appendChild(img);
+    area.appendChild(block);
   } else {
     const area = msgEl.querySelector('.tool-activity');
     if (!area) return;

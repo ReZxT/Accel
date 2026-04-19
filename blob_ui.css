@@ -1476,6 +1476,15 @@ input, textarea, select {
 .tool-result-block { background: rgba(34, 197, 94, 0.06); border-color: rgba(34, 197, 94, 0.15); }
 .approval-block { background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.3); }
 
+.screenshot-result .screenshot-preview {
+  display: block;
+  max-width: 100%;
+  border-radius: 4px;
+  margin: 6px 10px 8px;
+  border: 1px solid rgba(255,255,255,0.08);
+  cursor: zoom-in;
+}
+
 .screenshot-gallery {
   display: flex;
   flex-direction: column;
