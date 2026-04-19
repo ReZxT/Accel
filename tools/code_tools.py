@@ -1,7 +1,10 @@
 import asyncio
 import glob
 import os
+import shutil
+import stat
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 from config import config
@@ -136,6 +139,102 @@ async def list_dir(path: str) -> str:
         return f"Error listing {path}: {e}"
 
 
+_PROTECTED = {".git", ".env", ".ssh", ".gnupg"}
+
+
+def _safety_check(path: str, operation: str) -> str | None:
+    """Return error string if the path is unsafe for the given operation, else None."""
+    p = Path(_resolve(path))
+    if any(part in _PROTECTED for part in p.parts):
+        return f"Refused: '{path}' is inside a protected path ({_PROTECTED})"
+    if p == Path(WORKSPACE_ROOT):
+        return f"Refused: cannot {operation} the workspace root"
+    return None
+
+
+async def delete_file(path: str) -> str:
+    """Delete a single file. Refuses to delete directories, protected paths (.git, .env, .ssh), or the workspace root."""
+    resolved = _resolve(path)
+    p = Path(resolved)
+    err = _safety_check(path, "delete")
+    if err:
+        return err
+    if not p.exists():
+        return f"Not found: {resolved}"
+    if p.is_dir():
+        return f"Refused: '{resolved}' is a directory. Use bash to remove directories."
+    try:
+        p.unlink()
+        return f"Deleted: {resolved}"
+    except Exception as e:
+        return f"Error deleting {resolved}: {e}"
+
+
+async def get_file_info(path: str) -> str:
+    """Get detailed info about a file or directory: size, permissions, owner, timestamps."""
+    resolved = _resolve(path)
+    p = Path(resolved)
+    if not p.exists():
+        return f"Not found: {resolved}"
+    try:
+        st = p.stat()
+        mode = stat.filemode(st.st_mode)
+        size = st.st_size
+        size_str = (
+            f"{size} B" if size < 1024
+            else f"{size / 1024:.1f} KB" if size < 1024 ** 2
+            else f"{size / 1024 ** 2:.1f} MB"
+        )
+        try:
+            import pwd, grp
+            owner = pwd.getpwuid(st.st_uid).pw_name
+            group = grp.getgrgid(st.st_gid).gr_name
+        except Exception:
+            owner, group = str(st.st_uid), str(st.st_gid)
+        mtime = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        ctime = datetime.fromtimestamp(st.st_ctime).strftime("%Y-%m-%d %H:%M:%S")
+        atime = datetime.fromtimestamp(st.st_atime).strftime("%Y-%m-%d %H:%M:%S")
+        kind = "directory" if p.is_dir() else ("symlink" if p.is_symlink() else "file")
+        lines = [
+            f"Path:        {resolved}",
+            f"Type:        {kind}",
+            f"Size:        {size_str} ({size:,} bytes)",
+            f"Permissions: {mode}",
+            f"Owner:       {owner}:{group}",
+            f"Modified:    {mtime}",
+            f"Created:     {ctime}",
+            f"Accessed:    {atime}",
+        ]
+        if p.is_symlink():
+            lines.append(f"Target:      {os.readlink(resolved)}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error getting info for {resolved}: {e}"
+
+
+async def move_file(source: str, destination: str, overwrite: bool = False) -> str:
+    """Move or rename a file or directory. Refuses to overwrite existing paths unless overwrite=True.
+    Also refuses to touch protected paths (.git, .env, .ssh)."""
+    src = _resolve(source)
+    dst = _resolve(destination)
+    for path, label in ((source, "source"), (destination, "destination")):
+        err = _safety_check(path, "move")
+        if err:
+            return err
+    src_p = Path(src)
+    dst_p = Path(dst)
+    if not src_p.exists():
+        return f"Not found: {src}"
+    if dst_p.exists() and not overwrite:
+        return f"Refused: destination '{dst}' already exists. Pass overwrite=true to replace it."
+    try:
+        dst_p.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(src, dst)
+        return f"Moved: {src} → {dst}"
+    except Exception as e:
+        return f"Error moving {src} → {dst}: {e}"
+
+
 from tools.web_tools import search_web, fetch_url, screenshot_url
 from tools.calculator import calculate
 from tools.calendar_tools import calendar_add_event, calendar_get_events, calendar_delete_event, calendar_today
@@ -151,6 +250,9 @@ TOOL_REGISTRY = {
     "search_web": search_web,
     "fetch_url": fetch_url,
     "screenshot_url": screenshot_url,
+    "delete_file": delete_file,
+    "get_file_info": get_file_info,
+    "move_file": move_file,
     "calculate": calculate,
     "calendar_add_event": calendar_add_event,
     "calendar_get_events": calendar_get_events,
@@ -161,7 +263,7 @@ TOOL_REGISTRY = {
 }
 
 # irreversible by default — user can override in tool_settings
-IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file", "calendar_add_event", "calendar_delete_event"}
+IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file", "delete_file", "move_file", "calendar_add_event", "calendar_delete_event"}
 
 
 async def execute_tool(name: str, args: dict) -> str | dict:

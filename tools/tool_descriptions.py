@@ -37,6 +37,17 @@ search_files — Search by filename pattern or content regex.
 list_dir — List a directory's contents.
   path (string, required): Directory path
 
+delete_file — Delete a single file. Refuses directories, protected paths (.git, .env, .ssh), and workspace root.
+  path (string, required): Path to the file to delete
+
+get_file_info — Get detailed metadata for a file or directory (size, permissions, owner, timestamps).
+  path (string, required): Path to inspect
+
+move_file — Move or rename a file or directory.
+  source (string, required): Current path
+  destination (string, required): New path
+  overwrite (bool, optional): Allow overwriting existing destination (default false)
+
 search_web — Search the web via SearXNG (aggregates Bing, DuckDuckGo, Brave, Google).
   query (string, required): Search query
   num_results (integer, optional): Number of results (default 8)
