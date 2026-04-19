@@ -1,5 +1,6 @@
 import asyncio
 import json
+import httpx
 from datetime import datetime
 from typing import AsyncGenerator
 
@@ -8,9 +9,11 @@ from memory.sources import search_sources
 from memory.profile import get_profile
 from memory.sessions import load_session, save_session
 from memory.extraction import extract_after_response
+from memory.episodes import maybe_compress
 from curator.preflight import run_preflight, get_thinking_budget
 from router.classifier import RouteDecision
 from tools.llm import chat_complete
+from config import config
 
 SYSTEM_TEMPLATE = """You are {personality}, an AI assistant.
 Date/time: {datetime}
@@ -29,6 +32,42 @@ Relevant knowledge:
 {sources}"""
 
 
+async def _store_image(img: dict, session_id: str, index: int) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            await client.post(
+                f"{config.code_splitter_url}/store/image",
+                json={
+                    "base64": img["base64"],
+                    "mime_type": img.get("type", "image/png"),
+                    "session_id": session_id,
+                    "index": index,
+                },
+            )
+    except Exception:
+        pass
+
+
+async def _preprocess_images(images: list[dict], session_id: str) -> list[dict]:
+    """Resize images to 1280px max and archive originals to MinIO in parallel."""
+    asyncio.gather(*[_store_image(img, session_id, i) for i, img in enumerate(images)])
+
+    processed = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        for img in images:
+            try:
+                r = await client.post(
+                    f"{config.code_splitter_url}/preprocess/image",
+                    json={"base64": img["base64"], "mime_type": img.get("type", "image/png")},
+                )
+                r.raise_for_status()
+                result = r.json()
+                processed.append({"base64": result["base64"], "mime_type": result["mime_type"]})
+            except Exception:
+                processed.append({"base64": img["base64"], "mime_type": img.get("type", "image/png")})
+    return processed
+
+
 async def run_chat(
     chat_input: str,
     chat_history: list[dict],
@@ -39,6 +78,9 @@ async def run_chat(
     # load server session if client sent empty history
     if not chat_history:
         chat_history = await load_session(session_id)
+
+    # compress old turns into episodes if history is large
+    chat_history = await maybe_compress(session_id, chat_history)
 
     profile = await get_profile()
     context_state = profile.get("context_state", "free")
@@ -89,11 +131,12 @@ async def run_chat(
 
     # add current user message (with images if present)
     if images:
+        processed = await _preprocess_images(images, session_id)
         user_content = [{"type": "text", "text": chat_input}]
-        for img in images:
+        for img in processed:
             user_content.append({
                 "type": "image_url",
-                "image_url": {"url": f"data:{img['type']};base64,{img['base64']}"},
+                "image_url": {"url": f"data:{img['mime_type']};base64,{img['base64']}"},
             })
         messages.append({"role": "user", "content": user_content})
     else:
