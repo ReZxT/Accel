@@ -1,5 +1,5 @@
+import re
 import httpx
-from bs4 import BeautifulSoup
 from config import config
 
 SEARXNG_URL = "http://localhost:8888"
@@ -50,12 +50,11 @@ async def fetch_url(url: str) -> str:
     except Exception as e:
         return f"Fetch failed: {e}"
 
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
-        tag.decompose()
-
-    text = soup.get_text(separator="\n", strip=True)
-    lines = [l for l in text.splitlines() if l.strip()]
+    # strip tags with regex (avoids bs4 dependency)
+    text = re.sub(r"<(script|style|nav|footer|header|aside)[^>]*>[\s\S]*?</\1>", "", html, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&[a-z]+;", " ", text)
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
     text = "\n".join(lines)
 
     if len(text) > MAX_TEXT:
