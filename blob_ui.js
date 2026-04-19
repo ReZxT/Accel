@@ -424,6 +424,7 @@ function createStreamingMessage() {
     <div class="message-body">
       <div class="thinking-stream" style="display:none"></div>
       <div class="tool-activity"></div>
+      <div class="screenshot-gallery" style="display:none"></div>
       <div class="message-content"></div>
     </div>`;
   container.appendChild(msgDiv);
@@ -445,21 +446,43 @@ function appendToolCall(msgEl, toolName, args) {
 }
 
 function appendToolResult(msgEl, toolName, output, imageB64 = null, imageMime = 'image/png') {
-  const area = msgEl.querySelector('.tool-activity');
-  if (!area) return;
-  const block = document.createElement('div');
-  block.className = 'tool-result-block';
   if (imageB64) {
-    block.innerHTML = `
-      <div class="tool-block-header">📤 <strong>${escapeHtml(toolName)}</strong> result</div>
-      <img src="data:${imageMime};base64,${imageB64}" style="max-width:100%;border-radius:6px;cursor:pointer;margin:6px 0" onclick="viewImage(this.src)" />`;
+    // Images go into the screenshot gallery between tool activity and response
+    const gallery = msgEl.querySelector('.screenshot-gallery');
+    if (gallery) {
+      if (gallery.style.display === 'none' || !gallery.style.display) {
+        gallery.style.display = 'flex';
+        const label = document.createElement('div');
+        label.className = 'screenshot-gallery-label';
+        label.textContent = 'Screenshots';
+        gallery.appendChild(label);
+      }
+      const img = document.createElement('img');
+      img.src = `data:${imageMime};base64,${imageB64}`;
+      img.alt = 'Screenshot';
+      img.className = 'screenshot-preview';
+      img.onclick = () => viewImage(img.src);
+      gallery.appendChild(img);
+    }
+    // Also add a small note in tool activity
+    const area = msgEl.querySelector('.tool-activity');
+    if (area) {
+      const note = document.createElement('div');
+      note.className = 'tool-result-block';
+      note.innerHTML = `<div class="tool-block-header">📸 <strong>${escapeHtml(toolName)}</strong> — screenshot captured</div>`;
+      area.appendChild(note);
+    }
   } else {
+    const area = msgEl.querySelector('.tool-activity');
+    if (!area) return;
     const truncated = output.length > 2000 ? output.slice(0, 2000) + '\n… (truncated)' : output;
+    const block = document.createElement('div');
+    block.className = 'tool-result-block';
     block.innerHTML = `
       <div class="tool-block-header">📤 <strong>${escapeHtml(toolName)}</strong> result</div>
       <pre class="tool-block-output">${escapeHtml(truncated)}</pre>`;
+    area.appendChild(block);
   }
-  area.appendChild(block);
   scrollToBottom();
 }
 
