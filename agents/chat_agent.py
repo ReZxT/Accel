@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import uuid
 import httpx
 from datetime import datetime
@@ -86,6 +87,7 @@ async def _run_agentic_loop(
     tool_settings: dict,
 ) -> AsyncGenerator[str, None]:
     """Streaming agentic loop: call model, parse tool calls, execute, repeat."""
+    nudged = False
     for _ in range(MAX_TOOL_ITERATIONS):
         response_text = ""
         thinking_text = ""
@@ -100,6 +102,15 @@ async def _run_agentic_loop(
             if delta.get("content"):
                 response_text += delta["content"]
 
+        # extract <think> blocks from content field (DIMOE sometimes puts thinking there)
+        think_blocks = re.findall(r"<think>([\s\S]*?)</think>", response_text, re.IGNORECASE)
+        if think_blocks:
+            extra_thinking = "\n".join(think_blocks).strip()
+            if extra_thinking:
+                thinking_text += extra_thinking
+                yield json.dumps({"type": "thinking", "text": extra_thinking})
+            response_text = re.sub(r"<think>[\s\S]*?</think>", "", response_text, flags=re.IGNORECASE).strip()
+
         tool_calls = parse_xml_tool_calls(response_text)
         clean_text = strip_tool_calls(response_text) if tool_calls else response_text
 
@@ -108,6 +119,12 @@ async def _run_agentic_loop(
             yield json.dumps({"type": "text", "text": clean_text})
 
         if not tool_calls:
+            # model produced no text and no tool calls — nudge once then stop
+            if not clean_text and not nudged:
+                nudged = True
+                messages.append({"role": "assistant", "content": ""})
+                messages.append({"role": "user", "content": "Please provide your response."})
+                continue
             break
 
         # emit separator before tool activity
