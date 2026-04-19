@@ -427,7 +427,7 @@ function createStreamingMessage() {
     <div class="message-body">
       <div class="thinking-stream" style="display:none"></div>
       <div class="tool-activity"></div>
-      <div class="message-content"></div>
+      <div class="message-content"><div class="typing-dots"><span></span><span></span><span></span></div></div>
     </div>`;
   container.appendChild(msgDiv);
   scrollToBottom();
@@ -513,10 +513,19 @@ async function resolveApproval(requestId, approved) {
 function updateStreamingMessage(msgEl, text, thinking) {
   const contentEl = msgEl.querySelector('.message-content');
   const thinkEl = msgEl.querySelector('.thinking-stream');
-  if (contentEl) contentEl.innerHTML = formatContent(text) || '<span class="cursor">▍</span>';
-  if (thinkEl && thinking) {
-    thinkEl.style.display = 'block';
-    thinkEl.textContent = thinking;
+  if (contentEl) {
+    if (text) {
+      contentEl.innerHTML = formatContent(text);
+    }
+    // else keep the three-dots placeholder
+  }
+  if (thinkEl) {
+    if (thinking) {
+      thinkEl.style.display = 'block';
+      thinkEl.textContent = '🧠 Thinking…';
+    } else {
+      thinkEl.style.display = 'none';
+    }
   }
 }
 
@@ -666,8 +675,8 @@ function renderError(message) {
   const msgDiv = document.createElement('div');
   msgDiv.className = 'message error bot';
   msgDiv.innerHTML = `
-    <div class="message-avatar">⚠️</div>
-    <div>
+    <div class="message-avatar"></div>
+    <div class="message-body">
       <div class="message-content"><strong>Error:</strong> ${escapeHtml(message)}</div>
       <div class="message-meta"><span>${formatTimestamp(getTimestamp())}</span></div>
     </div>

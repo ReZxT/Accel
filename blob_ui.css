@@ -754,16 +754,23 @@ select.glass-input option {
 }
 
 .message.user .message-avatar {
-  background: linear-gradient(135deg, var(--blob-1), var(--blob-3));
+  background: linear-gradient(135deg, #8b5cf6, #a855f7);
+  animation: miniBlobMorph 10s ease-in-out infinite;
 }
 
-.message.bot .message-avatar {
-  background: linear-gradient(135deg, var(--blob-2), var(--blob-5));
+.message.bot.streaming .message-avatar {
+  background: linear-gradient(135deg, #f97316, #ea580c);
+  animation: miniBlobMorph 3s ease-in-out infinite;
+}
+
+.message.bot:not(.streaming) .message-avatar {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
   animation: miniBlobMorph 8s ease-in-out infinite;
 }
 
 .message.error .message-avatar {
   background: linear-gradient(135deg, var(--error), #dc2626);
+  animation: miniBlobMorph 8s ease-in-out infinite;
 }
 
 .message-content {
@@ -1436,14 +1443,18 @@ select.glass-input option {
 }
 
 .thinking-stream {
-  font-size: 0.75rem;
-  color: var(--text-muted, #888);
+  font-size: 0.78rem;
+  color: rgba(249, 115, 22, 0.8);
   font-style: italic;
-  padding: 4px 8px;
-  max-height: 60px;
-  overflow: hidden;
-  border-left: 2px solid var(--border, #444);
+  padding: 5px 10px;
+  border-left: 2px solid rgba(249, 115, 22, 0.4);
   margin-bottom: 6px;
+  animation: thinkPulse 2s ease-in-out infinite;
+}
+
+@keyframes thinkPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
 }
 
 .cursor {
