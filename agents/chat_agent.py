@@ -1,19 +1,26 @@
 import asyncio
 import json
+import uuid
 import httpx
 from datetime import datetime
 from typing import AsyncGenerator
 
 from memory.facts import search_facts, search_procedures
 from memory.sources import search_sources
-from memory.profile import get_profile
+from memory.profile import get_profile, get_tool_settings
 from memory.sessions import load_session, save_session
 from memory.extraction import extract_after_response
 from memory.episodes import maybe_compress
 from curator.preflight import run_preflight, get_thinking_budget
 from router.classifier import RouteDecision
 from tools.llm import chat_complete
+from tools.tool_parser import parse_xml_tool_calls, strip_tool_calls
+from tools.tool_descriptions import TOOLS_SYSTEM_BLOCK
+from tools.code_tools import execute_tool, IRREVERSIBLE_TOOLS
+from tools import approval
 from config import config
+
+MAX_TOOL_ITERATIONS = 10
 
 SYSTEM_TEMPLATE = """You are {personality}, an AI assistant.
 Date/time: {datetime}
@@ -29,7 +36,8 @@ Relevant procedures:
 {procedures}
 
 Relevant knowledge:
-{sources}"""
+{sources}
+{tools_block}"""
 
 
 async def _store_image(img: dict, session_id: str, index: int) -> None:
@@ -49,9 +57,7 @@ async def _store_image(img: dict, session_id: str, index: int) -> None:
 
 
 async def _preprocess_images(images: list[dict], session_id: str) -> list[dict]:
-    """Resize images to 1280px max and archive originals to MinIO in parallel."""
     asyncio.gather(*[_store_image(img, session_id, i) for i, img in enumerate(images)])
-
     processed = []
     async with httpx.AsyncClient(timeout=30) as client:
         for img in images:
@@ -68,6 +74,87 @@ async def _preprocess_images(images: list[dict], session_id: str) -> list[dict]:
     return processed
 
 
+async def _needs_approval(tool_name: str, tool_settings: dict) -> bool:
+    policy = tool_settings.get(tool_name, "require" if tool_name in IRREVERSIBLE_TOOLS else "auto")
+    return policy == "require"
+
+
+async def _run_agentic_loop(
+    messages: list[dict],
+    budget_kwargs: dict,
+    session_id: str,
+    tool_settings: dict,
+) -> AsyncGenerator[str, None]:
+    """Streaming agentic loop: call model, parse tool calls, execute, repeat."""
+    for _ in range(MAX_TOOL_ITERATIONS):
+        response_text = ""
+        thinking_text = ""
+
+        # stream model response — buffer text, stream thinking live
+        async for chunk in await chat_complete(messages, stream=True, **budget_kwargs):
+            choice = chunk.get("choices", [{}])[0]
+            delta = choice.get("delta", {})
+            if delta.get("reasoning_content"):
+                thinking_text += delta["reasoning_content"]
+                yield json.dumps({"type": "thinking", "text": delta["reasoning_content"]})
+            if delta.get("content"):
+                response_text += delta["content"]
+
+        tool_calls = parse_xml_tool_calls(response_text)
+        clean_text = strip_tool_calls(response_text) if tool_calls else response_text
+
+        # emit clean text (strips XML tool call markup)
+        if clean_text:
+            yield json.dumps({"type": "text", "text": clean_text})
+
+        if not tool_calls:
+            break
+
+        # emit separator before tool activity
+        yield json.dumps({"type": "tool_start"})
+
+        messages.append({"role": "assistant", "content": response_text})
+
+        tool_result_parts = []
+        for tc in tool_calls:
+            tool_name = tc["name"]
+            tool_args = tc["args"]
+            tool_id = tc["id"]
+
+            # approval gate
+            if await _needs_approval(tool_name, tool_settings):
+                request_id = str(uuid.uuid4())
+                yield json.dumps({
+                    "type": "approval_request",
+                    "request_id": request_id,
+                    "tool": tool_name,
+                    "args": tool_args,
+                })
+                approved = await approval.wait_for_approval(request_id)
+                if not approved:
+                    result = f"[Tool '{tool_name}' was denied by user]"
+                    yield json.dumps({"type": "tool_denied", "tool": tool_name})
+                    tool_result_parts.append(
+                        f"<tool_result>\n<function={tool_name}>\n{result}\n</function>\n</tool_result>"
+                    )
+                    continue
+
+            # emit tool_call event (shown in UI)
+            yield json.dumps({"type": "tool_call", "tool": tool_name, "args": tool_args})
+
+            result = await execute_tool(tool_name, tool_args)
+
+            yield json.dumps({"type": "tool_result", "tool": tool_name, "output": result})
+
+            tool_result_parts.append(
+                f"<tool_result>\n<function={tool_name}>\n{result}\n</function>\n</tool_result>"
+            )
+
+        messages.append({"role": "user", "content": "\n".join(tool_result_parts)})
+
+    return
+
+
 async def run_chat(
     chat_input: str,
     chat_history: list[dict],
@@ -75,17 +162,15 @@ async def run_chat(
     images: list[dict] | None = None,
     route: RouteDecision | None = None,
 ) -> AsyncGenerator[str, None]:
-    # load server session if client sent empty history
     if not chat_history:
         chat_history = await load_session(session_id)
 
-    # compress old turns into episodes if history is large
     chat_history = await maybe_compress(session_id, chat_history)
 
     profile = await get_profile()
     context_state = profile.get("context_state", "free")
+    tool_settings = await get_tool_settings()
 
-    # pre-flight
     preflight = await run_preflight(
         recent_turns=chat_history[-3:],
         current_personality=profile.get("current_personality", "Casual"),
@@ -95,7 +180,6 @@ async def run_chat(
     thinking_depth = preflight["thinking_depth"]
     budget = get_thinking_budget(thinking_depth)
 
-    # memory retrieval — skip if router flagged useRetrieval=False
     use_retrieval = route.use_retrieval if route else True
     if use_retrieval:
         facts, procedures, sources = await asyncio.gather(
@@ -109,7 +193,10 @@ async def run_chat(
     facts_text = "\n".join(f"- {f.get('text', '')}" for f in facts) or "None"
     proc_text = "\n".join(f"- {p.get('text', '')}" for p in procedures) or "None"
     sources_text = "\n".join(f"- {s.get('text', s.get('content', ''))[:300]}" for s in sources) or "None"
-    profile_text = json.dumps({k: v for k, v in profile.items() if k != "context_state"}, indent=2)
+    profile_text = json.dumps(
+        {k: v for k, v in profile.items() if k not in ("context_state", "tool_settings")},
+        indent=2,
+    )
 
     system = SYSTEM_TEMPLATE.format(
         personality=personality,
@@ -119,9 +206,9 @@ async def run_chat(
         facts=facts_text,
         procedures=proc_text,
         sources=sources_text,
+        tools_block=TOOLS_SYSTEM_BLOCK,
     )
 
-    # build messages
     messages = [{"role": "system", "content": system}]
     for turn in chat_history[-40:]:
         role = turn.get("role", "user")
@@ -129,7 +216,6 @@ async def run_chat(
         if role in ("user", "assistant") and content:
             messages.append({"role": role, "content": content})
 
-    # add current user message (with images if present)
     if images:
         processed = await _preprocess_images(images, session_id)
         user_content = [{"type": "text", "text": chat_input}]
@@ -142,27 +228,22 @@ async def run_chat(
     else:
         messages.append({"role": "user", "content": chat_input})
 
-    # call model
-    kwargs = {}
+    budget_kwargs = {}
     if budget is not None:
-        kwargs["extra_body"] = {"thinking_budget_tokens": budget}
+        budget_kwargs["extra_body"] = {"thinking_budget_tokens": budget}
 
+    # agentic loop — accumulate final response text for session save
     response_text = ""
     thinking_text = ""
 
-    async for chunk in await chat_complete(messages, stream=True, **kwargs):
-        choice = chunk.get("choices", [{}])[0]
-        delta = choice.get("delta", {})
+    async for event_json in _run_agentic_loop(messages, budget_kwargs, session_id, tool_settings):
+        event = json.loads(event_json)
+        if event["type"] == "text":
+            response_text += event["text"]
+        elif event["type"] == "thinking":
+            thinking_text += event["text"]
+        yield event_json
 
-        if delta.get("reasoning_content"):
-            thinking_text += delta["reasoning_content"]
-            yield json.dumps({"type": "thinking", "text": delta["reasoning_content"]})
-
-        if delta.get("content"):
-            response_text += delta["content"]
-            yield json.dumps({"type": "text", "text": delta["content"]})
-
-    # save session + fire post-response extraction in parallel
     new_history = chat_history + [
         {"role": "user", "content": chat_input},
         {"role": "assistant", "content": response_text, "thoughts": thinking_text},

@@ -35,6 +35,60 @@ function loadSettings() {
   renderSessionSidebar();
   loadSessionHistory();
   loadContextState();
+  loadToolSettings();
+}
+
+const TOOL_LABELS = {
+  bash: { label: 'bash', desc: 'Shell command execution' },
+  write_file: { label: 'write_file', desc: 'Create or overwrite files' },
+  edit_file: { label: 'edit_file', desc: 'Edit existing files' },
+  read_file: { label: 'read_file', desc: 'Read file contents' },
+  search_files: { label: 'search_files', desc: 'Search by name or content' },
+  list_dir: { label: 'list_dir', desc: 'List directory contents' },
+};
+
+let _toolSettings = {};
+
+async function loadToolSettings() {
+  try {
+    const resp = await fetch('/settings/tools', { signal: AbortSignal.timeout(5000) });
+    if (resp.ok) {
+      const data = await resp.json();
+      _toolSettings = data.tool_settings || {};
+      renderToolSettings();
+    }
+  } catch (_) {}
+}
+
+function renderToolSettings() {
+  const container = document.getElementById('toolSettingsList');
+  if (!container) return;
+  container.innerHTML = Object.entries(TOOL_LABELS).map(([key, { label, desc }]) => {
+    const policy = _toolSettings[key] || (key === 'bash' || key === 'write_file' || key === 'edit_file' ? 'require' : 'auto');
+    return `
+      <div class="tool-setting-row">
+        <div class="tool-setting-info">
+          <span class="tool-setting-name">${label}</span>
+          <span class="tool-setting-desc">${desc}</span>
+        </div>
+        <select class="tool-policy-select" onchange="updateToolSetting('${key}', this.value)">
+          <option value="require" ${policy === 'require' ? 'selected' : ''}>Require approval</option>
+          <option value="auto" ${policy === 'auto' ? 'selected' : ''}>Auto-approve</option>
+        </select>
+      </div>`;
+  }).join('');
+}
+
+async function updateToolSetting(toolName, policy) {
+  _toolSettings[toolName] = policy;
+  try {
+    await fetch('/settings/tools', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool_settings: _toolSettings }),
+    });
+    showToast(`${toolName}: ${policy === 'auto' ? 'auto-approve' : 'approval required'}`, 'success', 2000);
+  } catch (_) {}
 }
 
 async function loadSessionHistory() {
@@ -392,11 +446,73 @@ function createStreamingMessage() {
     <div class="message-avatar"></div>
     <div class="message-body">
       <div class="thinking-stream" style="display:none"></div>
+      <div class="tool-activity"></div>
       <div class="message-content"></div>
     </div>`;
   container.appendChild(msgDiv);
   scrollToBottom();
   return msgDiv;
+}
+
+function appendToolCall(msgEl, toolName, args) {
+  const area = msgEl.querySelector('.tool-activity');
+  if (!area) return;
+  const argsStr = typeof args === 'object' ? JSON.stringify(args, null, 2) : String(args);
+  const block = document.createElement('div');
+  block.className = 'tool-call-block';
+  block.innerHTML = `
+    <div class="tool-block-header">🔧 <strong>${escapeHtml(toolName)}</strong></div>
+    <pre class="tool-block-args">${escapeHtml(argsStr)}</pre>`;
+  area.appendChild(block);
+  scrollToBottom();
+}
+
+function appendToolResult(msgEl, toolName, output) {
+  const area = msgEl.querySelector('.tool-activity');
+  if (!area) return;
+  const truncated = output.length > 2000 ? output.slice(0, 2000) + '\n… (truncated)' : output;
+  const block = document.createElement('div');
+  block.className = 'tool-result-block';
+  block.innerHTML = `
+    <div class="tool-block-header">📤 <strong>${escapeHtml(toolName)}</strong> result</div>
+    <pre class="tool-block-output">${escapeHtml(truncated)}</pre>`;
+  area.appendChild(block);
+  scrollToBottom();
+}
+
+function appendApprovalRequest(msgEl, requestId, toolName, args) {
+  const area = msgEl.querySelector('.tool-activity');
+  if (!area) return;
+  const argsStr = typeof args === 'object' ? JSON.stringify(args, null, 2) : String(args);
+  const block = document.createElement('div');
+  block.className = 'approval-block';
+  block.id = `approval_${requestId}`;
+  block.innerHTML = `
+    <div class="tool-block-header">⚠️ <strong>${escapeHtml(toolName)}</strong> — requires approval</div>
+    <pre class="tool-block-args">${escapeHtml(argsStr)}</pre>
+    <div class="approval-buttons">
+      <button class="approve-btn" onclick="resolveApproval('${requestId}', true)">✅ Approve</button>
+      <button class="deny-btn" onclick="resolveApproval('${requestId}', false)">❌ Deny</button>
+    </div>`;
+  area.appendChild(block);
+  scrollToBottom();
+}
+
+async function resolveApproval(requestId, approved) {
+  const card = document.getElementById(`approval_${requestId}`);
+  if (card) {
+    card.innerHTML = `<div class="approval-resolved">${approved ? '✅ Approved' : '❌ Denied'}</div>`;
+    card.className = `approval-block ${approved ? 'approved' : 'denied'}`;
+  }
+  try {
+    await fetch(`/approve/${requestId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved }),
+    });
+  } catch (e) {
+    debugLog(`Approval POST failed: ${e.message}`, 'error');
+  }
 }
 
 function updateStreamingMessage(msgEl, text, thinking) {
@@ -986,6 +1102,20 @@ async function sendMessage() {
             } else if (chunk.type === 'thinking') {
               accThinking += chunk.text;
               updateStreamingMessage(msgEl, accText, accThinking);
+            } else if (chunk.type === 'tool_call') {
+              appendToolCall(msgEl, chunk.tool, chunk.args);
+            } else if (chunk.type === 'tool_result') {
+              appendToolResult(msgEl, chunk.tool, chunk.output);
+            } else if (chunk.type === 'approval_request') {
+              appendApprovalRequest(msgEl, chunk.request_id, chunk.tool, chunk.args);
+            } else if (chunk.type === 'tool_denied') {
+              const area = msgEl.querySelector('.tool-activity');
+              if (area) {
+                const b = document.createElement('div');
+                b.className = 'tool-result-block denied';
+                b.textContent = `❌ ${chunk.tool} denied`;
+                area.appendChild(b);
+              }
             } else if (chunk.type === 'error') {
               finalizeStreamingMessage(msgEl, accText || chunk.text, accThinking, false);
               renderError(chunk.text);
