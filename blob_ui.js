@@ -34,7 +34,7 @@ function loadSettings() {
   updateStatus('configured');
   renderSessionSidebar();
   loadSessionHistory();
-  loadContextState();
+
   loadToolSettings();
 }
 
@@ -205,32 +205,6 @@ function toggleKnowledge() {
   document.getElementById('knowledgePanel').classList.toggle('open');
 }
 
-async function loadContextState() {
-  try {
-    const resp = await fetch(`${getSplitterBase()}/profile?t=${Date.now()}`, { signal: AbortSignal.timeout(5000) });
-    if (resp.ok) {
-      const profile = await resp.json();
-      setActiveModeBtn(profile.context_state || 'free');
-    }
-  } catch (_) {}
-}
-
-function setActiveModeBtn(mode) {
-  ['work', 'study', 'free'].forEach(m => {
-    document.getElementById(`modeBtn_${m}`)?.classList.toggle('active', m === mode);
-  });
-}
-
-async function setContextState(mode) {
-  setActiveModeBtn(mode);
-  try {
-    await fetch(`${getSplitterBase()}/profile`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ context_state: mode })
-    });
-  } catch (_) {}
-}
 
 async function indexVault() {
   const btn = document.getElementById('vaultBtn');
