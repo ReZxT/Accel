@@ -533,29 +533,43 @@ function updateStreamingMessage(msgEl, text, thinking) {
 
 function finalizeStreamingMessage(msgEl, text, thinking, save = true) {
   msgEl.classList.remove('streaming');
-  const thinkId = `think_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  const thinkingHtml = thinking ? `
-    <div class="thinking-block">
+  const body = msgEl.querySelector('.message-body');
+
+  // remove transient streaming elements, keep screenshot-gallery in place
+  body.querySelector('.thinking-stream')?.remove();
+  body.querySelector('.tool-activity')?.remove();
+
+  // insert thinking block at the top if present
+  if (thinking) {
+    const thinkId = `think_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const block = document.createElement('div');
+    block.className = 'thinking-block';
+    block.innerHTML = `
       <div class="thinking-header" onclick="toggleThinking('${thinkId}')">
         <span class="thinking-icon">💭</span>
         <span>Thoughts</span>
         <span class="thinking-toggle" id="${thinkId}_toggle">▼ Show</span>
       </div>
-      <div class="thinking-content" id="${thinkId}">${escapeHtml(thinking)}</div>
-    </div>` : '';
+      <div class="thinking-content" id="${thinkId}">${escapeHtml(thinking)}</div>`;
+    body.insertBefore(block, body.firstChild);
+  }
 
-  // preserve screenshot gallery before innerHTML wipe
-  const galleryEl = msgEl.querySelector('.screenshot-gallery');
-  const galleryHtml = galleryEl ? galleryEl.outerHTML : '';
+  // update message-content in place (already exists from streaming)
+  const contentEl = body.querySelector('.message-content');
+  if (contentEl) {
+    contentEl.innerHTML = formatContent(text);
+  } else {
+    const div = document.createElement('div');
+    div.className = 'message-content';
+    div.innerHTML = formatContent(text);
+    body.appendChild(div);
+  }
 
-  msgEl.querySelector('.message-body').innerHTML = `
-    ${thinkingHtml}
-    ${galleryHtml}
-    <div class="message-content">${formatContent(text)}</div>
-    <div class="message-meta">
-      <span>${formatTimestamp(getTimestamp())}</span>
-      <button class="copy-btn" onclick="copyMessage(this)">📋 Copy</button>
-    </div>`;
+  // append meta row
+  const meta = document.createElement('div');
+  meta.className = 'message-meta';
+  meta.innerHTML = `<span>${formatTimestamp(getTimestamp())}</span><button class="copy-btn" onclick="copyMessage(this)">📋 Copy</button>`;
+  body.appendChild(meta);
 
   if (save) {
     state.chatHistory.push({ role: 'bot', content: text, timestamp: getTimestamp(), thoughts: thinking || undefined });
