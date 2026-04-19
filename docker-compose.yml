@@ -1,0 +1,14 @@
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: bootstrap-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+      - ./blob_ui.js:/usr/share/nginx/html/blob_ui.js:ro
+      - ./blob_ui.css:/usr/share/nginx/html/blob_ui.css:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: always
