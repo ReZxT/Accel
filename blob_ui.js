@@ -535,9 +535,8 @@ function finalizeStreamingMessage(msgEl, text, thinking, save = true) {
   msgEl.classList.remove('streaming');
   const body = msgEl.querySelector('.message-body');
 
-  // remove transient streaming elements, keep screenshot-gallery in place
+  // remove only the live thinking stream; keep tool-activity and screenshot-gallery
   body.querySelector('.thinking-stream')?.remove();
-  body.querySelector('.tool-activity')?.remove();
 
   // insert thinking block at the top if present
   if (thinking) {
