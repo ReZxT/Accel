@@ -141,6 +141,7 @@ async def _run_agentic_loop(
             # approval gate
             if await _needs_approval(tool_name, tool_settings):
                 request_id = str(uuid.uuid4())
+                approval.register(request_id)
                 yield json.dumps({
                     "type": "approval_request",
                     "request_id": request_id,
