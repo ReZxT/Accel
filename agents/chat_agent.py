@@ -144,13 +144,45 @@ async def _run_agentic_loop(
 
             result = await execute_tool(tool_name, tool_args)
 
-            yield json.dumps({"type": "tool_result", "tool": tool_name, "output": result})
+            # image result (e.g. screenshot_url)
+            if isinstance(result, dict) and result.get("__type") == "image":
+                b64 = result["base64"]
+                mime = result.get("mime_type", "image/png")
+                url = result.get("url", "")
+                yield json.dumps({"type": "tool_result", "tool": tool_name, "output": f"[Screenshot of {url}]", "image": b64, "mime_type": mime})
+                tool_result_parts.append({
+                    "__type": "image",
+                    "tool": tool_name,
+                    "base64": b64,
+                    "mime_type": mime,
+                    "url": url,
+                })
+            elif isinstance(result, dict) and result.get("__type") == "error":
+                text = result.get("text", "Tool error")
+                yield json.dumps({"type": "tool_result", "tool": tool_name, "output": text})
+                tool_result_parts.append(
+                    f"<tool_result>\n<function={tool_name}>\n{text}\n</function>\n</tool_result>"
+                )
+            else:
+                yield json.dumps({"type": "tool_result", "tool": tool_name, "output": result})
+                tool_result_parts.append(
+                    f"<tool_result>\n<function={tool_name}>\n{result}\n</function>\n</tool_result>"
+                )
 
-            tool_result_parts.append(
-                f"<tool_result>\n<function={tool_name}>\n{result}\n</function>\n</tool_result>"
-            )
+        # build tool result message — mix text and images
+        text_parts = [p for p in tool_result_parts if isinstance(p, str)]
+        image_parts = [p for p in tool_result_parts if isinstance(p, dict)]
 
-        messages.append({"role": "user", "content": "\n".join(tool_result_parts)})
+        if image_parts:
+            content_blocks = []
+            if text_parts:
+                content_blocks.append({"type": "text", "text": "\n".join(text_parts)})
+            for img in image_parts:
+                content_blocks.append({"type": "text", "text": f"<tool_result>\n<function={img['tool']}>\n[Screenshot of {img['url']}]\n</function>\n</tool_result>"})
+                content_blocks.append({"type": "image_url", "image_url": {"url": f"data:{img['mime_type']};base64,{img['base64']}"}})
+            messages.append({"role": "user", "content": content_blocks})
+        else:
+            messages.append({"role": "user", "content": "\n".join(text_parts)})
 
     return
 

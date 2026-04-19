@@ -37,6 +37,17 @@ search_files — Search by filename pattern or content regex.
 list_dir — List a directory's contents.
   path (string, required): Directory path
 
+search_web — Search the web via SearXNG (aggregates Bing, DuckDuckGo, Brave, Google).
+  query (string, required): Search query
+  num_results (integer, optional): Number of results (default 8)
+
+fetch_url — Fetch a URL and return its readable text content (HTML stripped).
+  url (string, required): Full URL to fetch
+
+screenshot_url — Take a screenshot of a web page (returns image for visual analysis).
+  url (string, required): Full URL to screenshot
+  full_page (bool, optional): Capture full scrollable page (default false)
+
 After each tool call you will receive a <tool_result> block. Use it to inform your next step.
 Do not emit multiple tool calls at once unless they are fully independent.
 """

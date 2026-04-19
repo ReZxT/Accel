@@ -45,6 +45,9 @@ const TOOL_LABELS = {
   read_file: { label: 'read_file', desc: 'Read file contents' },
   search_files: { label: 'search_files', desc: 'Search by name or content' },
   list_dir: { label: 'list_dir', desc: 'List directory contents' },
+  search_web: { label: 'search_web', desc: 'Web search via SearXNG' },
+  fetch_url: { label: 'fetch_url', desc: 'Fetch and read a URL' },
+  screenshot_url: { label: 'screenshot_url', desc: 'Screenshot a web page' },
 };
 
 let _toolSettings = {};
@@ -467,15 +470,21 @@ function appendToolCall(msgEl, toolName, args) {
   scrollToBottom();
 }
 
-function appendToolResult(msgEl, toolName, output) {
+function appendToolResult(msgEl, toolName, output, imageB64 = null, imageMime = 'image/png') {
   const area = msgEl.querySelector('.tool-activity');
   if (!area) return;
-  const truncated = output.length > 2000 ? output.slice(0, 2000) + '\n… (truncated)' : output;
   const block = document.createElement('div');
   block.className = 'tool-result-block';
-  block.innerHTML = `
-    <div class="tool-block-header">📤 <strong>${escapeHtml(toolName)}</strong> result</div>
-    <pre class="tool-block-output">${escapeHtml(truncated)}</pre>`;
+  if (imageB64) {
+    block.innerHTML = `
+      <div class="tool-block-header">📤 <strong>${escapeHtml(toolName)}</strong> result</div>
+      <img src="data:${imageMime};base64,${imageB64}" style="max-width:100%;border-radius:6px;cursor:pointer;margin:6px 0" onclick="viewImage(this.src)" />`;
+  } else {
+    const truncated = output.length > 2000 ? output.slice(0, 2000) + '\n… (truncated)' : output;
+    block.innerHTML = `
+      <div class="tool-block-header">📤 <strong>${escapeHtml(toolName)}</strong> result</div>
+      <pre class="tool-block-output">${escapeHtml(truncated)}</pre>`;
+  }
   area.appendChild(block);
   scrollToBottom();
 }
@@ -1105,7 +1114,7 @@ async function sendMessage() {
             } else if (chunk.type === 'tool_call') {
               appendToolCall(msgEl, chunk.tool, chunk.args);
             } else if (chunk.type === 'tool_result') {
-              appendToolResult(msgEl, chunk.tool, chunk.output);
+              appendToolResult(msgEl, chunk.tool, chunk.output, chunk.image || null, chunk.mime_type);
             } else if (chunk.type === 'approval_request') {
               appendApprovalRequest(msgEl, chunk.request_id, chunk.tool, chunk.args);
             } else if (chunk.type === 'tool_denied') {

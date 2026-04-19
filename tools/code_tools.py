@@ -136,6 +136,8 @@ async def list_dir(path: str) -> str:
         return f"Error listing {path}: {e}"
 
 
+from tools.web_tools import search_web, fetch_url, screenshot_url
+
 TOOL_REGISTRY = {
     "read_file": read_file,
     "write_file": write_file,
@@ -143,13 +145,17 @@ TOOL_REGISTRY = {
     "bash": bash,
     "search_files": search_files,
     "list_dir": list_dir,
+    "search_web": search_web,
+    "fetch_url": fetch_url,
+    "screenshot_url": screenshot_url,
 }
 
 # irreversible by default — user can override in tool_settings
 IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file"}
 
 
-async def execute_tool(name: str, args: dict) -> str:
+async def execute_tool(name: str, args: dict) -> str | dict:
+    """Execute a tool. Returns str for text results, dict for image results."""
     fn = TOOL_REGISTRY.get(name)
     if not fn:
         return f"Unknown tool: {name}"
