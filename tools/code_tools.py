@@ -137,6 +137,9 @@ async def list_dir(path: str) -> str:
 
 
 from tools.web_tools import search_web, fetch_url, screenshot_url
+from tools.calculator import calculate
+from tools.calendar_tools import calendar_add_event, calendar_get_events, calendar_delete_event, calendar_today
+from tools.converter import convert_units, convert_currency
 
 TOOL_REGISTRY = {
     "read_file": read_file,
@@ -148,10 +151,17 @@ TOOL_REGISTRY = {
     "search_web": search_web,
     "fetch_url": fetch_url,
     "screenshot_url": screenshot_url,
+    "calculate": calculate,
+    "calendar_add_event": calendar_add_event,
+    "calendar_get_events": calendar_get_events,
+    "calendar_delete_event": calendar_delete_event,
+    "calendar_today": calendar_today,
+    "convert_units": convert_units,
+    "convert_currency": convert_currency,
 }
 
 # irreversible by default — user can override in tool_settings
-IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file"}
+IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file", "calendar_add_event", "calendar_delete_event"}
 
 
 async def execute_tool(name: str, args: dict) -> str | dict:

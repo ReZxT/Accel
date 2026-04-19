@@ -48,6 +48,35 @@ screenshot_url — Take a screenshot of a web page (returns image for visual ana
   url (string, required): Full URL to screenshot
   full_page (bool, optional): Capture full scrollable page (default false)
 
+calculate — Evaluate a math expression (supports +,-,*,/,**,%, trig, log, sqrt, abs, round, etc.).
+  expression (string, required): Math expression, e.g. "sqrt(2**8 + 144)" or "sin(pi/4)"
+
+calendar_today — Get today's date, day of week, Polish holiday status, and scheduled events.
+
+calendar_get_events — Get events and Polish holidays for a date or date range.
+  start_date (string, required): YYYY-MM-DD
+  end_date (string, optional): YYYY-MM-DD (omit for single day)
+
+calendar_add_event — Add an event to the calendar.
+  title (string, required): Event title
+  date (string, required): YYYY-MM-DD
+  time (string, optional): HH:MM — omit for all-day events
+  description (string, optional): Extra details
+  recurring (string, optional): none | daily | weekly | monthly | yearly (default: none)
+
+calendar_delete_event — Delete a calendar event.
+  event_id (integer, required): ID from calendar_get_events output
+
+convert_units — Convert between physical units (length, mass, temperature, speed, area, volume, energy, etc.).
+  value (number, required): Numeric value to convert
+  from_unit (string, required): Source unit, e.g. "km", "kg", "degC", "mph"
+  to_unit (string, required): Target unit, e.g. "miles", "lb", "degF", "kph"
+
+convert_currency — Convert between currencies using live exchange rates.
+  amount (number, required): Amount to convert
+  from_currency (string, required): ISO currency code, e.g. "USD", "PLN", "EUR"
+  to_currency (string, required): ISO currency code
+
 After each tool call you will receive a <tool_result> block. Use it to inform your next step.
 Do not emit multiple tool calls at once unless they are fully independent.
 """
