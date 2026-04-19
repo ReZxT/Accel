@@ -1,11 +1,18 @@
 // ===================== CONFIG =====================
 const WEBHOOK_URL = `${window.location.origin}/chat`;
 
+const SESSION_ICONS = {
+  standard:     `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>`,
+  coding:       `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>`,
+  architecture: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>`,
+  study:        `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>`,
+};
+
 const SESSIONS = [
-  { id: 'standard',     label: 'Standard',     icon: '💬' },
-  { id: 'coding',       label: 'Coding',        icon: '⌨️' },
-  { id: 'architecture', label: 'Architecture',  icon: '🏗️' },
-  { id: 'study',        label: 'Study',         icon: '📚' },
+  { id: 'standard',     label: 'Standard',     },
+  { id: 'coding',       label: 'Coding',        },
+  { id: 'architecture', label: 'Architecture',  },
+  { id: 'study',        label: 'Study',         },
 ];
 
 // ===================== STATE =====================
@@ -1217,7 +1224,7 @@ function renderSessionSidebar() {
     <button class="session-btn${s.id === state.currentSession ? ' active' : ''}"
             onclick="switchSession('${s.id}')"
             title="${s.label}">
-      <span class="session-icon">${s.icon}</span>
+      <span class="session-icon">${SESSION_ICONS[s.id] || ''}</span>
       <span class="session-label">${s.label}</span>
     </button>
   `).join('');
