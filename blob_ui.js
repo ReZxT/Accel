@@ -26,7 +26,9 @@ let pendingImages = []; // Array of { base64, name, size, file }
 let pendingFiles = [];  // Array of { content, name, size, language }
 
 // ===================== INIT =====================
-const UI_VERSION = '202604191200';
+const UI_VERSION = '202604192400';
+let _pollNow = false;
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') _pollNow = true; });
 
 document.addEventListener('DOMContentLoaded', () => {
   debugLog(`UI version: ${UI_VERSION}`, 'info');
@@ -150,11 +152,24 @@ async function loadSessionHistory() {
           renderMessage(msg.role, msg.content, msg.timestamp, false, msg.images || [], msg.files || [], msg.thoughts || '')
         );
         scrollToBottom();
+        // Upload localStorage-only history to server so other devices can see it
+        saveSessionToServer(sid, state.chatHistory);
       }
     } catch (_) {}
   }
   startSessionPolling();
   sendBtn.disabled = false;
+}
+
+async function saveSessionToServer(sid, messages) {
+  try {
+    await fetch(`${getSplitterBase()}/session`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sid, messages }),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (_) {}
 }
 
 let _pollTimer = null;
@@ -289,7 +304,7 @@ async function ingestFiles(fileList) {
       for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
       const b64 = btoa(binary);
 
-      statusEl.textContent = 'Ingesting…';
+      statusEl.textContent = 'Queuing…';
 
       const resp = await fetch(`${splitterBase}/ingest`, {
         method: 'POST',
@@ -302,11 +317,39 @@ async function ingestFiles(fileList) {
         statusEl.textContent = `Failed: ${err.detail || resp.statusText}`;
         statusEl.style.color = 'var(--error)';
       } else {
-        const result = await resp.json();
-        totalChunks += result.chunks_stored || 0;
-        succeeded++;
-        statusEl.textContent = `${result.chunks_stored} chunks`;
-        statusEl.style.color = 'var(--success)';
+        const { job_id } = await resp.json();
+        // Poll for completion
+        let result = null;
+        while (true) {
+          if (!_pollNow) await new Promise(r => setTimeout(r, 2000));
+          _pollNow = false;
+          let poll;
+          try { poll = await fetch(`${splitterBase}/ingest/status/${job_id}`); }
+          catch (_) { continue; }
+          if (!poll.ok) { statusEl.textContent = 'Poll error'; statusEl.style.color = 'var(--error)'; break; }
+          const s = await poll.json();
+          if (s.status === 'running') {
+            let prog = '';
+            if (s.phase === 'embedding' && s.embed_total > 0)
+              prog = ` ${s.embed_done}/${s.embed_total}`;
+            else if (s.total_blocks > 0)
+              prog = ` ${s.done_blocks}/${s.total_blocks}`;
+            statusEl.textContent = `${s.phase || 'processing'}${prog}…`;
+          } else if (s.status === 'done') {
+            result = s;
+            break;
+          } else {
+            statusEl.textContent = `Failed: ${s.error || 'unknown'}`;
+            statusEl.style.color = 'var(--error)';
+            break;
+          }
+        }
+        if (result) {
+          totalChunks += result.chunks_stored || 0;
+          succeeded++;
+          statusEl.textContent = `${result.chunks_stored} chunks`;
+          statusEl.style.color = 'var(--success)';
+        }
       }
     } catch (e) {
       statusEl.textContent = `Error: ${e.message}`;
@@ -1240,9 +1283,7 @@ function getSessionId() {
 }
 
 function renderSessionSidebar() {
-  const sidebar = document.getElementById('sessionSidebar');
-  if (!sidebar) return;
-  sidebar.innerHTML = SESSIONS.map(s => `
+  const html = SESSIONS.map(s => `
     <button class="session-btn${s.id === state.currentSession ? ' active' : ''}"
             onclick="switchSession('${s.id}')"
             title="${s.label}">
@@ -1250,6 +1291,10 @@ function renderSessionSidebar() {
       <span class="session-label">${s.label}</span>
     </button>
   `).join('');
+  const sidebar = document.getElementById('sessionSidebar');
+  if (sidebar) sidebar.innerHTML = html;
+  const mobile = document.getElementById('mobileSessionList');
+  if (mobile) mobile.innerHTML = html;
 }
 
 async function switchSession(id) {

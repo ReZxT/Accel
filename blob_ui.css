@@ -1079,6 +1079,8 @@ select.glass-input option {
 /* ============================================
    RESPONSIVE
    ============================================ */
+.mobile-sessions { display: none; }
+
 @media (max-width: 640px) {
   .chat-wrapper { padding: 0 8px; }
   .message-content { max-width: 88%; }
@@ -1086,6 +1088,26 @@ select.glass-input option {
   .setting-group.full-width { grid-column: 1; }
   .blob { filter: blur(80px); opacity: 0.2; }
   .setup-steps { max-width: 100%; }
+
+  .session-sidebar { display: none; }
+
+  .mobile-sessions {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    padding: 0 0 12px 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .mobile-sessions::-webkit-scrollbar { display: none; }
+  .mobile-sessions .session-btn {
+    flex-direction: row;
+    width: auto;
+    flex-shrink: 0;
+    padding: 8px 14px;
+    gap: 6px;
+    font-size: 0.72rem;
+  }
 }
 
 /* ============================================
@@ -1659,12 +1681,38 @@ input, textarea, select {
 }
 
 .tool-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted, #888);
-  margin-bottom: 8px;
-  padding: 0 2px;
+  padding: 2px 2px 4px;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.tool-settings-header:hover { color: var(--text-secondary); }
+
+.tool-settings-chevron {
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+#toolSettingsList {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.25s ease;
+}
+
+.tool-settings-section.open .tool-settings-chevron {
+  transform: rotate(180deg);
+}
+.tool-settings-section.open #toolSettingsList {
+  max-height: 600px;
 }
 
 .tool-setting-row {

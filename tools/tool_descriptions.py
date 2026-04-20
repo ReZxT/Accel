@@ -48,6 +48,28 @@ move_file — Move or rename a file or directory.
   destination (string, required): New path
   overwrite (bool, optional): Allow overwriting existing destination (default false)
 
+search_knowledge_base — Semantically search ingested books and documents (PDFs, EPUBs, papers). Use this before searching the web when the user asks about topics that may be in their library.
+  query (string, required): What to search for
+  top_k (integer, optional): Number of results (default 5)
+
+list_knowledge_base — List all books and documents currently ingested in the knowledge base.
+
+search_notes — Semantically search the Obsidian vault notes.
+  query (string, required): What to search for
+  top_k (integer, optional): Number of results (default 5)
+
+list_notes — List all notes currently indexed in the notes collection.
+
+ingest_note — Ingest or re-ingest a local markdown file into the notes collection. Use this after editing a note with edit_file or write_file so the updated content is searchable.
+  path (string, required): Path to the markdown file
+  title (string, optional): Override the note title
+
+search_audiobooks — Search AudioBookBay (audiobookbay.lu) for free audiobooks. Returns titles, authors, formats, total size, and magnet links ready to pass to add_torrent. Always present ALL results to the user with their sizes. If multiple results match or a book appears split into parts, ask the user which one(s) they want before calling add_torrent. Never auto-pick.
+  query (string, required): Book title, author, or keywords
+
+add_torrent — Send a magnet link to the system torrent client (Tixati) via xdg-open. Use this after finding an audiobook on AudioBookBay to start the download.
+  magnet (string, required): Magnet link starting with "magnet:"
+
 search_web — Search the web via SearXNG (aggregates Bing, DuckDuckGo, Brave, Google).
   query (string, required): Search query
   num_results (integer, optional): Number of results (default 8)
@@ -58,6 +80,12 @@ fetch_url — Fetch a URL and return its readable text content (HTML stripped).
 screenshot_url — Take a screenshot of a web page (returns image for visual analysis).
   url (string, required): Full URL to screenshot
   full_page (bool, optional): Capture full scrollable page (default false)
+
+ingest_file — Ingest a local document into the knowledge base (Qdrant sources). Supports PDF, EPUB, TXT, MD, RST.
+  path (string, required): Path to the file (e.g. /mnt/WD/Books/book.pdf)
+  title (string, optional): Override document title
+  author (string, optional): Author name
+  source_type (string, optional): book | document | paper | note (auto-detected from folder if omitted)
 
 calculate — Evaluate a math expression (supports +,-,*,/,**,%, trig, log, sqrt, abs, round, etc.).
   expression (string, required): Math expression, e.g. "sqrt(2**8 + 144)" or "sin(pi/4)"
@@ -87,6 +115,11 @@ convert_currency — Convert between currencies using live exchange rates.
   amount (number, required): Amount to convert
   from_currency (string, required): ISO currency code, e.g. "USD", "PLN", "EUR"
   to_currency (string, required): ISO currency code
+
+Media folders (use these for downloads):
+  /mnt/WD/Books/       — ebooks (PDF, EPUB) — ingestible into knowledge base
+  /mnt/WD/Audiobooks/  — audio books (MP3, M4B, etc.) — source: audiobookbay.lu
+  /mnt/WD/Documents/   — documents, papers, notes — ingestible into knowledge base
 
 After each tool call you will receive a <tool_result> block. Use it to inform your next step.
 Do not emit multiple tool calls at once unless they are fully independent.

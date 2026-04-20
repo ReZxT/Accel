@@ -235,7 +235,137 @@ async def move_file(source: str, destination: str, overwrite: bool = False) -> s
         return f"Error moving {src} → {dst}: {e}"
 
 
-from tools.web_tools import search_web, fetch_url, screenshot_url
+SPLITTER_URL = os.getenv("SPLITTER_URL", "http://localhost:9200")
+
+BOOKS_DIR = "/mnt/WD/Books"
+AUDIOBOOKS_DIR = "/mnt/WD/Audiobooks"
+DOCUMENTS_DIR = "/mnt/WD/Documents"
+
+
+async def ingest_note(path: str, title: str = "") -> str:
+    """Ingest or re-ingest a local markdown note into the notes knowledge base."""
+    import httpx
+    resolved = _resolve(path)
+    p = Path(resolved)
+    if not p.exists():
+        return f"File not found: {resolved}"
+    if not p.is_file():
+        return f"Not a file: {resolved}"
+    try:
+        content = p.read_text(errors="replace")
+    except Exception as e:
+        return f"Error reading {resolved}: {e}"
+    async with httpx.AsyncClient() as client:
+        try:
+            r = await client.post(
+                f"{SPLITTER_URL}/ingest/note",
+                json={
+                    "content": content,
+                    "filename": p.name,
+                    "filepath": str(p),
+                    "title": title or p.stem,
+                },
+                timeout=60,
+            )
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            return f"Ingest note failed: {e}"
+    if data.get("status") == "ok":
+        return f"Ingested note '{data.get('title', p.stem)}' — {data.get('chunks_stored', 0)} chunks stored."
+    return f"Ingest note error: {data.get('error', 'unknown')}"
+
+
+async def add_torrent(magnet: str) -> str:
+    """Open a magnet link in the system torrent client via xdg-open."""
+    if not magnet.startswith("magnet:"):
+        return "Invalid magnet link — must start with 'magnet:'"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "xdg-open", magnet,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if proc.returncode != 0:
+            return f"xdg-open failed (exit {proc.returncode}): {stderr.decode().strip()}"
+        return "Magnet link sent to torrent client."
+    except Exception as e:
+        return f"Failed to open magnet link: {e}"
+
+_SOURCE_TYPE_BY_FOLDER = {
+    "books": "book",
+    "audiobooks": None,  # not ingestible
+    "documents": "document",
+}
+
+
+async def ingest_file(path: str, title: str = "", author: str = "", source_type: str = "") -> str:
+    """Ingest a local document (PDF, EPUB, TXT, MD, RST) into the knowledge base (Qdrant sources)."""
+    import asyncio
+    import base64
+    import httpx
+
+    resolved = _resolve(path)
+    p = Path(resolved)
+    if not p.exists():
+        return f"File not found: {resolved}"
+    if not p.is_file():
+        return f"Not a file: {resolved}"
+
+    ext = p.suffix.lower().lstrip(".")
+    if ext not in ("pdf", "epub", "txt", "md", "rst"):
+        return f"Unsupported file type: .{ext} — supported: pdf, epub, txt, md, rst"
+
+    if not source_type:
+        folder = p.parent.name.lower()
+        source_type = _SOURCE_TYPE_BY_FOLDER.get(folder, "document")
+        if source_type is None:
+            return "Audio files cannot be ingested into the knowledge base."
+        if ext == "epub" and source_type == "document":
+            source_type = "book"
+
+    size_mb = p.stat().st_size / 1024 / 1024
+    with open(resolved, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+
+    async with httpx.AsyncClient() as client:
+        try:
+            r = await client.post(
+                f"{SPLITTER_URL}/ingest",
+                json={
+                    "base64": b64,
+                    "filename": p.name,
+                    "source_type": source_type,
+                    "title": title or p.stem,
+                    "author": author or "",
+                },
+                timeout=30,
+            )
+            r.raise_for_status()
+            job_id = r.json()["job_id"]
+        except Exception as e:
+            return f"Failed to start ingest: {e}"
+
+    # Poll until done
+    while True:
+        await asyncio.sleep(3)
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.get(f"{SPLITTER_URL}/ingest/status/{job_id}", timeout=10)
+                status = r.json()
+        except Exception as e:
+            return f"Poll failed: {e}"
+
+        if status["status"] == "done":
+            chunks = status.get("chunks_stored", 0)
+            label = title or p.stem
+            return f"Ingested '{label}' ({size_mb:.1f} MB, {source_type}) — {chunks} chunks stored."
+        elif status["status"] == "error":
+            return f"Ingest failed: {status.get('error', 'unknown error')}"
+
+
+from tools.web_tools import search_web, fetch_url, screenshot_url, search_knowledge_base, list_knowledge_base, search_notes, list_notes, search_audiobooks
 from tools.calculator import calculate
 from tools.calendar_tools import calendar_add_event, calendar_get_events, calendar_delete_event, calendar_today
 from tools.converter import convert_units, convert_currency
@@ -248,11 +378,19 @@ TOOL_REGISTRY = {
     "search_files": search_files,
     "list_dir": list_dir,
     "search_web": search_web,
+    "search_audiobooks": search_audiobooks,
     "fetch_url": fetch_url,
+    "search_knowledge_base": search_knowledge_base,
+    "list_knowledge_base": list_knowledge_base,
+    "search_notes": search_notes,
+    "list_notes": list_notes,
+    "ingest_note": ingest_note,
     "screenshot_url": screenshot_url,
     "delete_file": delete_file,
     "get_file_info": get_file_info,
     "move_file": move_file,
+    "add_torrent": add_torrent,
+    "ingest_file": ingest_file,
     "calculate": calculate,
     "calendar_add_event": calendar_add_event,
     "calendar_get_events": calendar_get_events,
@@ -263,7 +401,7 @@ TOOL_REGISTRY = {
 }
 
 # irreversible by default — user can override in tool_settings
-IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file", "delete_file", "move_file", "calendar_add_event", "calendar_delete_event"}
+IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file", "delete_file", "move_file", "ingest_file", "ingest_note", "add_torrent", "calendar_add_event", "calendar_delete_event"}
 
 
 async def execute_tool(name: str, args: dict) -> str | dict:

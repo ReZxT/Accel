@@ -8,6 +8,7 @@ from typing import AsyncGenerator
 
 from memory.facts import search_facts, search_procedures
 from memory.sources import search_sources
+from memory.notes import search_notes
 from memory.profile import get_profile, get_tool_settings
 from memory.sessions import load_session, save_session
 from memory.extraction import extract_after_response
@@ -36,8 +37,13 @@ Relevant facts:
 Relevant procedures:
 {procedures}
 
-Relevant knowledge:
+Relevant notes (auto-retrieved from Obsidian vault):
+{notes}
+Note: use search_notes to retrieve more vault notes on demand, list_notes to see all indexed notes, edit_file + ingest_note to update a note and re-index it.
+
+Relevant knowledge (auto-retrieved from books and documents):
 {sources}
+Note: use search_knowledge_base to retrieve more from the knowledge base on demand, list_knowledge_base to see what is ingested.
 {tools_block}"""
 
 
@@ -232,17 +238,27 @@ async def run_chat(
 
     use_retrieval = route.use_retrieval if route else True
     if use_retrieval:
-        facts, procedures, sources = await asyncio.gather(
+        facts, procedures, sources, notes = await asyncio.gather(
             search_facts(chat_input, top_k=5),
             search_procedures(chat_input, top_k=4),
-            search_sources(chat_input, top_k=5),
+            search_sources(chat_input, top_k=3),
+            search_notes(chat_input, top_k=3),
         )
     else:
-        facts, procedures, sources = [], [], []
+        facts, procedures, sources, notes = [], [], [], []
 
     facts_text = "\n".join(f"- {f.get('text', '')}" for f in facts) or "None"
     proc_text = "\n".join(f"- {p.get('text', '')}" for p in procedures) or "None"
-    sources_text = "\n".join(f"- {s.get('text', s.get('content', ''))[:300]}" for s in sources) or "None"
+
+    def _fmt_source(s: dict) -> str:
+        title = s.get("title", "")
+        filepath = s.get("filepath", "")
+        text = s.get("text", s.get("content", ""))[:300]
+        label = f"[{title} — {filepath}]" if filepath else (f"[{title}]" if title else "")
+        return f"{label} {text}".strip()
+
+    sources_text = "\n".join(f"- {_fmt_source(s)}" for s in sources) or "None"
+    notes_text = "\n".join(f"- {_fmt_source(n)}" for n in notes) or "None"
     profile_text = json.dumps(
         {k: v for k, v in profile.items() if k not in ("context_state", "tool_settings")},
         indent=2,
@@ -255,6 +271,7 @@ async def run_chat(
         profile=profile_text,
         facts=facts_text,
         procedures=proc_text,
+        notes=notes_text,
         sources=sources_text,
         tools_block=TOOLS_SYSTEM_BLOCK,
     )
