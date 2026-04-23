@@ -300,7 +300,10 @@ _SOURCE_TYPE_BY_FOLDER = {
 }
 
 
-async def ingest_file(path: str, title: str = "", author: str = "", source_type: str = "") -> str:
+async def ingest_file(path: str = "", file_path: str = "", filepath: str = "", title: str = "", author: str = "", source_type: str = "", **kwargs) -> str:
+    path = path or file_path or filepath
+    if not path:
+        return f"Error: ingest_file requires a 'path' argument. Received: {dict(**kwargs)}"
     """Ingest a local document (PDF, EPUB, TXT, MD, RST) into the knowledge base (Qdrant sources)."""
     import asyncio
     import base64
@@ -365,7 +368,7 @@ async def ingest_file(path: str, title: str = "", author: str = "", source_type:
             return f"Ingest failed: {status.get('error', 'unknown error')}"
 
 
-from tools.web_tools import search_web, fetch_url, screenshot_url, search_knowledge_base, list_knowledge_base, search_notes, list_notes, search_audiobooks
+from tools.web_tools import search_web, fetch_url, screenshot_url, search_knowledge_base, list_knowledge_base, search_notes, list_notes, search_audiobooks, save_memory, update_memory, delete_memory, search_facts, search_procedures, search_episodes, download_file, delete_source, delete_note
 from tools.calculator import calculate
 from tools.calendar_tools import calendar_add_event, calendar_get_events, calendar_delete_event, calendar_today
 from tools.converter import convert_units, convert_currency
@@ -377,6 +380,7 @@ TOOL_REGISTRY = {
     "bash": bash,
     "search_files": search_files,
     "list_dir": list_dir,
+    "download_file": download_file,
     "search_web": search_web,
     "search_audiobooks": search_audiobooks,
     "fetch_url": fetch_url,
@@ -385,12 +389,20 @@ TOOL_REGISTRY = {
     "search_notes": search_notes,
     "list_notes": list_notes,
     "ingest_note": ingest_note,
+    "save_memory": save_memory,
+    "update_memory": update_memory,
+    "delete_memory": delete_memory,
+    "search_facts": search_facts,
+    "search_procedures": search_procedures,
+    "search_episodes": search_episodes,
     "screenshot_url": screenshot_url,
     "delete_file": delete_file,
     "get_file_info": get_file_info,
     "move_file": move_file,
     "add_torrent": add_torrent,
     "ingest_file": ingest_file,
+    "delete_source": delete_source,
+    "delete_note": delete_note,
     "calculate": calculate,
     "calendar_add_event": calendar_add_event,
     "calendar_get_events": calendar_get_events,
@@ -401,7 +413,7 @@ TOOL_REGISTRY = {
 }
 
 # irreversible by default — user can override in tool_settings
-IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file", "delete_file", "move_file", "ingest_file", "ingest_note", "add_torrent", "calendar_add_event", "calendar_delete_event"}
+IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file", "delete_file", "move_file", "ingest_file", "ingest_note", "add_torrent", "calendar_add_event", "calendar_delete_event", "delete_source", "delete_note", "delete_memory"}
 
 
 async def execute_tool(name: str, args: dict) -> str | dict:
@@ -412,6 +424,6 @@ async def execute_tool(name: str, args: dict) -> str | dict:
     try:
         return await fn(**args)
     except TypeError as e:
-        return f"Invalid arguments for {name}: {e}"
+        return f"Invalid arguments for {name}: {e} (got: {list(args.keys())})"
     except Exception as e:
         return f"Tool error ({name}): {e}"

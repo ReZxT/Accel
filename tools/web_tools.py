@@ -1,10 +1,15 @@
 import asyncio
+import os
 import re
+import time
+import uuid
 import httpx
 from config import config
 from memory.sources import search_sources
 from memory.notes import search_notes as _search_notes
-from memory.facts import get_client
+from memory.facts import get_client, search_facts as _search_facts, search_procedures as _search_procedures
+from memory.episodes import search_episodes as _search_episodes
+from memory.extraction import _upsert_items
 
 SEARXNG_URL = "http://localhost:8888"
 PLAYWRIGHT_URL = "http://localhost:9300"
@@ -145,25 +150,30 @@ async def list_notes() -> str:
     """List all notes currently indexed in the notes collection."""
     try:
         client = get_client()
-        result = await client.scroll(
-            collection_name="notes",
-            limit=1000,
-            with_payload=["title", "filename", "filepath", "ingested_at"],
-            with_vectors=False,
-        )
+        seen = {}
+        offset = None
+        while True:
+            result = await client.scroll(
+                collection_name="notes",
+                limit=500,
+                offset=offset,
+                with_payload=["title", "filename", "filepath", "ingested_at"],
+                with_vectors=False,
+            )
+            for point in result[0]:
+                p = point.payload
+                key = p.get("filepath") or p.get("filename", "")
+                if key and key not in seen:
+                    seen[key] = {
+                        "title": p.get("title") or key,
+                        "filepath": key,
+                        "ingested_at": (p.get("ingested_at") or "")[:10],
+                    }
+            offset = result[1]
+            if offset is None:
+                break
     except Exception as e:
         return f"Failed to list notes: {e}"
-
-    seen = {}
-    for point in result[0]:
-        p = point.payload
-        key = p.get("filepath") or p.get("filename", "")
-        if key not in seen:
-            seen[key] = {
-                "title": p.get("title") or key,
-                "filepath": key,
-                "ingested_at": (p.get("ingested_at") or "")[:10],
-            }
 
     if not seen:
         return "No notes indexed. Use ingest_note or ask me to run vault re-index."
@@ -178,26 +188,31 @@ async def list_knowledge_base() -> str:
     """List all documents/books currently ingested in the knowledge base."""
     try:
         client = get_client()
-        result = await client.scroll(
-            collection_name="sources",
-            limit=1000,
-            with_payload=["title", "filename", "source_type", "author", "ingested_at"],
-            with_vectors=False,
-        )
+        seen = {}
+        offset = None
+        while True:
+            result = await client.scroll(
+                collection_name="sources",
+                limit=500,
+                offset=offset,
+                with_payload=["title", "filename", "source_type", "author", "ingested_at"],
+                with_vectors=False,
+            )
+            for point in result[0]:
+                p = point.payload
+                key = p.get("filename", "")
+                if key and key not in seen:
+                    seen[key] = {
+                        "title": p.get("title") or key,
+                        "author": p.get("author", ""),
+                        "source_type": p.get("source_type", ""),
+                        "ingested_at": (p.get("ingested_at") or "")[:10],
+                    }
+            offset = result[1]
+            if offset is None:
+                break
     except Exception as e:
         return f"Failed to list knowledge base: {e}"
-
-    seen = {}
-    for point in result[0]:
-        p = point.payload
-        key = p.get("filename", "")
-        if key not in seen:
-            seen[key] = {
-                "title": p.get("title") or key,
-                "author": p.get("author", ""),
-                "source_type": p.get("source_type", ""),
-                "ingested_at": (p.get("ingested_at") or "")[:10],
-            }
 
     if not seen:
         return "Knowledge base is empty."
@@ -207,6 +222,178 @@ async def list_knowledge_base() -> str:
         author = f" by {info['author']}" if info["author"] else ""
         lines.append(f"- **{info['title']}**{author} ({info['source_type']}, {info['ingested_at']})")
     return f"{len(seen)} document(s) in knowledge base:\n" + "\n".join(lines)
+
+
+async def delete_source(title: str) -> str:
+    """Delete all chunks of a document from the knowledge base (sources collection) by title.
+    Use list_knowledge_base first to confirm the exact title."""
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    try:
+        client = get_client()
+        result = await client.delete(
+            collection_name="sources",
+            points_selector=Filter(
+                must=[FieldCondition(key="title", match=MatchValue(value=title))]
+            ),
+        )
+        return f"Deleted all chunks for '{title}' from knowledge base (operation id: {result.operation_id})."
+    except Exception as e:
+        return f"Failed to delete '{title}' from knowledge base: {e}"
+
+
+async def delete_note(title: str) -> str:
+    """Delete all chunks of a note from the notes collection by title.
+    Use list_notes first to confirm the exact title."""
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    try:
+        client = get_client()
+        result = await client.delete(
+            collection_name="notes",
+            points_selector=Filter(
+                must=[FieldCondition(key="title", match=MatchValue(value=title))]
+            ),
+        )
+        return f"Deleted all chunks for note '{title}' from notes collection (operation id: {result.operation_id})."
+    except Exception as e:
+        return f"Failed to delete note '{title}': {e}"
+
+
+VALID_MEMORY_COLLECTIONS = {"facts", "procedures", "episodes"}
+
+
+async def save_memory(text: str, collection: str = "facts") -> str:
+    """Save a piece of information directly to a memory collection, bypassing the curator."""
+    if collection not in VALID_MEMORY_COLLECTIONS:
+        return f"Invalid collection '{collection}'. Choose from: {', '.join(VALID_MEMORY_COLLECTIONS)}"
+    try:
+        await _upsert_items(collection, [text])
+        return f"Saved to {collection}."
+    except Exception as e:
+        return f"Failed to save: {e}"
+
+
+async def update_memory(old_text: str, new_text: str, collection: str = "facts") -> str:
+    """Replace an existing memory item with new text. Deletes the old entry (matched by exact text)
+    and inserts the updated version. Use this when a stored fact is outdated."""
+    if collection not in VALID_MEMORY_COLLECTIONS:
+        return f"Invalid collection '{collection}'. Choose from: {', '.join(VALID_MEMORY_COLLECTIONS)}"
+    import uuid as _uuid
+    old_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, old_text))
+    try:
+        client = get_client()
+        await client.delete(collection_name=collection, points_selector=[old_id])
+        await _upsert_items(collection, [new_text])
+        return f"Updated in {collection}: '{old_text[:60]}' → '{new_text[:60]}'"
+    except Exception as e:
+        return f"Failed to update: {e}"
+
+
+async def delete_memory(text: str, collection: str = "facts") -> str:
+    """Delete an exact memory entry by its text. Use search_facts/search_procedures/search_episodes
+    first to find the exact stored text, then pass it here."""
+    if collection not in VALID_MEMORY_COLLECTIONS:
+        return f"Invalid collection '{collection}'. Choose from: {', '.join(VALID_MEMORY_COLLECTIONS)}"
+    import uuid as _uuid
+    point_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, text))
+    try:
+        await get_client().delete(collection_name=collection, points_selector=[point_id])
+        return f"Deleted from {collection}."
+    except Exception as e:
+        return f"Failed to delete: {e}"
+
+
+async def search_facts(query: str, top_k: int = 5) -> str:
+    """Search the facts memory collection for stored facts about the user."""
+    try:
+        results = await _search_facts(query, top_k=top_k)
+    except Exception as e:
+        return f"Facts search failed: {e}"
+    if not results:
+        return "No relevant facts found."
+    return "\n".join(f"- {r.get('text', '')}" for r in results)
+
+
+async def search_procedures(query: str, top_k: int = 5) -> str:
+    """Search the procedures memory collection for stored interaction patterns."""
+    try:
+        results = await _search_procedures(query, top_k=top_k)
+    except Exception as e:
+        return f"Procedures search failed: {e}"
+    if not results:
+        return "No relevant procedures found."
+    return "\n".join(f"- {r.get('text', '')}" for r in results)
+
+
+async def search_episodes(query: str, top_k: int = 5) -> str:
+    """Search episodic memory for past conversation summaries."""
+    try:
+        results = await _search_episodes(query, top_k=top_k)
+    except Exception as e:
+        return f"Episodes search failed: {e}"
+    if not results:
+        return "No relevant episodes found."
+    return "\n".join(f"- {r.get('text', '')}" for r in results)
+
+
+DOWNLOADS_DIR = os.path.expanduser("~/Downloads")
+
+
+async def download_file(url: str, filename: str = "", ingest: bool = False) -> str:
+    """Download a file from a URL and save it to ~/Downloads.
+    Supports PDFs, EPUBs, and any other binary file.
+    Set ingest=True to automatically ingest the file into the knowledge base after download (PDFs/EPUBs/TXT only)."""
+    import os
+    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
+    if not filename:
+        filename = url.split("?")[0].rstrip("/").split("/")[-1] or "download"
+        if "." not in filename:
+            filename += ".bin"
+
+    dest = os.path.join(DOWNLOADS_DIR, filename)
+
+    try:
+        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+            async with client.stream("GET", url, headers={"User-Agent": "Mozilla/5.0"}) as r:
+                r.raise_for_status()
+                total = int(r.headers.get("content-length", 0))
+                downloaded = 0
+                with open(dest, "wb") as f:
+                    async for chunk in r.aiter_bytes(chunk_size=65536):
+                        f.write(chunk)
+                        downloaded += len(chunk)
+    except Exception as e:
+        return f"Download failed: {e}"
+
+    size_mb = os.path.getsize(dest) / 1_048_576
+    result = f"Downloaded to {dest} ({size_mb:.1f} MB)"
+
+    if ingest:
+        ext = filename.rsplit(".", 1)[-1].lower()
+        if ext in ("pdf", "epub", "txt", "md", "rst"):
+            try:
+                import base64 as _b64
+                with open(dest, "rb") as f:
+                    b64 = _b64.b64encode(f.read()).decode()
+                async with httpx.AsyncClient(timeout=300) as client:
+                    r = await client.post(
+                        f"{config.code_splitter_url}/ingest",
+                        json={
+                            "base64": b64,
+                            "filename": filename,
+                            "source_type": ext if ext not in ("md", "rst") else "document",
+                            "title": filename.rsplit(".", 1)[0],
+                            "author": "",
+                        },
+                    )
+                    r.raise_for_status()
+                result += " — ingested into knowledge base."
+            except Exception as e:
+                result += f" — ingest failed: {e}"
+        else:
+            result += f" — file type .{ext} not supported for ingestion."
+
+    return result
 
 
 AUDIOBOOKBAY_URL = "https://audiobookbay.lu"

@@ -1,7 +1,7 @@
 import time
 import uuid
 from qdrant_client.models import PointStruct
-from memory.facts import get_client
+from memory.facts import get_client, _rerank_by_recency
 from tools.llm import embed, curator_complete
 
 COMPRESS_THRESHOLD = 50  # turns before compression triggers
@@ -66,3 +66,15 @@ async def maybe_compress(session_id: str, history: list[dict]) -> list[dict]:
         pass
 
     return recent_turns
+
+
+async def search_episodes(query: str, top_k: int = 5, threshold: float = 0.5) -> list[dict]:
+    vector = await embed(query)
+    results = await get_client().query_points(
+        collection_name="episodes",
+        query=vector,
+        limit=top_k * 2,
+        score_threshold=threshold,
+        with_payload=True,
+    )
+    return _rerank_by_recency(results.points, top_k)

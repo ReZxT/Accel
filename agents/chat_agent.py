@@ -22,7 +22,8 @@ from tools.code_tools import execute_tool, IRREVERSIBLE_TOOLS
 from tools import approval
 from config import config
 
-MAX_TOOL_ITERATIONS = 10
+MAX_TOOL_ITERATIONS = 25
+TOOL_CONTINUE_BATCH = 25
 
 SYSTEM_TEMPLATE = """You are {personality}, an AI assistant.
 Date/time: {datetime}
@@ -94,7 +95,8 @@ async def _run_agentic_loop(
 ) -> AsyncGenerator[str, None]:
     """Streaming agentic loop: call model, parse tool calls, execute, repeat."""
     nudged = False
-    for _ in range(MAX_TOOL_ITERATIONS):
+    iterations = 0
+    while True:
         response_text = ""
         thinking_text = ""
 
@@ -124,6 +126,12 @@ async def _run_agentic_loop(
         if clean_text:
             yield json.dumps({"type": "text", "text": clean_text})
 
+        # Build assistant content — embed thinking so it stays in context
+        def _assistant_content(text: str, thinking: str) -> str:
+            if thinking:
+                return f"<think>{thinking}</think>\n{text}" if text else f"<think>{thinking}</think>"
+            return text
+
         if not tool_calls:
             # model produced no text and no tool calls — nudge once then stop
             if not clean_text and not nudged:
@@ -131,12 +139,31 @@ async def _run_agentic_loop(
                 messages.append({"role": "assistant", "content": ""})
                 messages.append({"role": "user", "content": "Please provide your response."})
                 continue
+            # Append final response to messages so run_chat can save the full exchange
+            messages.append({"role": "assistant", "content": _assistant_content(response_text, thinking_text)})
             break
+
+        iterations += 1
+        if iterations >= MAX_TOOL_ITERATIONS:
+            request_id = str(uuid.uuid4())
+            approval.register(request_id)
+            yield json.dumps({
+                "type": "approval_request",
+                "request_id": request_id,
+                "tool": "__continue__",
+                "args": {"iterations_used": iterations, "message": f"Reached {iterations} tool calls. Continue for another {TOOL_CONTINUE_BATCH}?"},
+            })
+            approved = await approval.wait_for_approval(request_id)
+            if not approved:
+                yield json.dumps({"type": "text", "text": f"\n\n*(Stopped after {iterations} tool iterations.)*"})
+                break
+            iterations = 0
 
         # emit separator before tool activity
         yield json.dumps({"type": "tool_start"})
 
-        messages.append({"role": "assistant", "content": response_text})
+        # Include thinking in intermediate assistant messages too
+        messages.append({"role": "assistant", "content": _assistant_content(response_text, thinking_text)})
 
         tool_result_parts = []
         for tc in tool_calls:
@@ -166,7 +193,13 @@ async def _run_agentic_loop(
             # emit tool_call event (shown in UI)
             yield json.dumps({"type": "tool_call", "tool": tool_name, "args": tool_args})
 
-            result = await execute_tool(tool_name, tool_args)
+            tool_task = asyncio.create_task(execute_tool(tool_name, tool_args))
+            while not tool_task.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(tool_task), timeout=15)
+                except asyncio.TimeoutError:
+                    yield json.dumps({"type": "heartbeat"})
+            result = tool_task.result()
 
             # image result (e.g. screenshot_url)
             if isinstance(result, dict) and result.get("__type") == "image":
@@ -217,6 +250,7 @@ async def run_chat(
     session_id: str,
     images: list[dict] | None = None,
     route: RouteDecision | None = None,
+    voice_mode: bool = False,
 ) -> AsyncGenerator[str, None]:
     if not chat_history:
         chat_history = await load_session(session_id)
@@ -275,13 +309,16 @@ async def run_chat(
         sources=sources_text,
         tools_block=TOOLS_SYSTEM_BLOCK,
     )
+    if voice_mode:
+        system += "\n\n[VOICE MODE] Respond in 1-3 concise spoken sentences unless the user explicitly asks to explain or expand. No markdown, no bullet points, no code blocks. Natural spoken language only."
 
     messages = [{"role": "system", "content": system}]
     for turn in chat_history[-40:]:
         role = turn.get("role", "user")
         content = turn.get("content", "")
-        if role in ("user", "assistant") and content:
-            messages.append({"role": role, "content": content})
+        if role not in ("user", "assistant") or not content:
+            continue
+        messages.append({"role": role, "content": content})
 
     if images:
         processed = await _preprocess_images(images, session_id)
@@ -295,11 +332,13 @@ async def run_chat(
     else:
         messages.append({"role": "user", "content": chat_input})
 
+    loop_start = len(messages)  # index of first new turn added by the loop
+
     budget_kwargs = {}
     if budget is not None:
         budget_kwargs["extra_body"] = {"thinking_budget_tokens": budget}
 
-    # agentic loop — accumulate final response text for session save
+    # agentic loop — accumulate final response text for extraction/display
     response_text = ""
     thinking_text = ""
 
@@ -311,9 +350,30 @@ async def run_chat(
             thinking_text += event["text"]
         yield event_json
 
-    new_history = chat_history + [
-        {"role": "user", "content": chat_input},
-        {"role": "assistant", "content": response_text, "thoughts": thinking_text},
-    ]
+    # Build new history: prior turns + current user input + full loop exchange
+    # Strip base64 image data from tool result messages to keep Qdrant storage lean
+    def _strip_images(turn: dict) -> dict:
+        content = turn.get("content")
+        if isinstance(content, list):
+            stripped = []
+            for block in content:
+                if block.get("type") == "image_url":
+                    stripped.append({"type": "text", "text": "[image omitted from history]"})
+                else:
+                    stripped.append(block)
+            return {**turn, "content": stripped}
+        return turn
+
+    # Only save the final assistant message — skip intermediate tool-call/result turns
+    # so server and client history stay the same length and pollSession doesn't misfire.
+    final_assistant = None
+    for turn in reversed(messages[loop_start:]):
+        if turn.get("role") == "assistant":
+            final_assistant = _strip_images({**turn, "content": response_text, "thoughts": thinking_text})
+            break
+
+    new_history = chat_history + [{"role": "user", "content": chat_input}]
+    if final_assistant:
+        new_history.append(final_assistant)
     await save_session(session_id, new_history)
     extract_after_response(chat_input, response_text)

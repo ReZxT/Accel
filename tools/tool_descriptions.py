@@ -54,6 +54,12 @@ search_knowledge_base — Semantically search ingested books and documents (PDFs
 
 list_knowledge_base — List all books and documents currently ingested in the knowledge base.
 
+delete_source — Delete a document and all its chunks from the knowledge base. Use list_knowledge_base first to confirm the exact title. Requires approval.
+  title (string, required): Exact title of the document to delete
+
+delete_note — Delete a note and all its chunks from the notes collection. Use list_notes first to confirm the exact title. Requires approval.
+  title (string, required): Exact title of the note to delete
+
 search_notes — Semantically search the Obsidian vault notes.
   query (string, required): What to search for
   top_k (integer, optional): Number of results (default 5)
@@ -64,11 +70,44 @@ ingest_note — Ingest or re-ingest a local markdown file into the notes collect
   path (string, required): Path to the markdown file
   title (string, optional): Override the note title
 
+save_memory — Save a piece of information directly to memory, bypassing the curator. Deduplication is automatic — exact duplicates are silently skipped.
+  text (string, required): The information to save
+  collection (string, optional): Target collection — facts (default), procedures, or episodes
+
+update_memory — Replace an existing memory item with corrected or updated text. Use search_facts/search_procedures/search_episodes first to retrieve the exact stored text, then pass it as old_text. Deletes the old entry and inserts the new one.
+  old_text (string, required): Exact text of the existing entry to replace
+  new_text (string, required): Updated text to store instead
+  collection (string, optional): Collection to update — facts (default), procedures, or episodes
+
+delete_memory — Delete an exact memory entry. Use search_facts/search_procedures/search_episodes first to find the exact stored text, then pass it here.
+  text (string, required): Exact text of the entry to delete
+  collection (string, optional): Collection to delete from — facts (default), procedures, or episodes
+
+  text (string, required): The information to save
+  collection (string, optional): Target collection — facts (default), procedures, or episodes
+
+search_facts — Search the facts memory collection for stored facts about the user (preferences, background, life details). Use this when you need to recall something specific about the user that may have been stored in a previous session.
+  query (string, required): What to search for
+  top_k (integer, optional): Number of results (default 5)
+
+search_procedures — Search the procedures memory collection for stored interaction patterns (how the user likes to work, communicate, or learn).
+  query (string, required): What to search for
+  top_k (integer, optional): Number of results (default 5)
+
+search_episodes — Search episodic memory for summaries of past conversations. Useful for recalling what was discussed or decided in previous sessions.
+  query (string, required): What to search for
+  top_k (integer, optional): Number of results (default 5)
+
 search_audiobooks — Search AudioBookBay (audiobookbay.lu) for free audiobooks. Returns titles, authors, formats, total size, and magnet links ready to pass to add_torrent. Always present ALL results to the user with their sizes. If multiple results match or a book appears split into parts, ask the user which one(s) they want before calling add_torrent. Never auto-pick.
   query (string, required): Book title, author, or keywords
 
 add_torrent — Send a magnet link to the system torrent client (Tixati) via xdg-open. Use this after finding an audiobook on AudioBookBay to start the download.
   magnet (string, required): Magnet link starting with "magnet:"
+
+download_file — Download any file from a URL and save it to ~/Downloads. Use this for PDFs, EPUBs, or any binary file that fetch_url can't handle. Set ingest=true to automatically add the file to the knowledge base after downloading.
+  url (string, required): Direct URL to the file
+  filename (string, optional): Override the filename (auto-detected from URL if omitted)
+  ingest (bool, optional): Ingest into knowledge base after download — supports PDF, EPUB, TXT, MD, RST (default false)
 
 search_web — Search the web via SearXNG (aggregates Bing, DuckDuckGo, Brave, Google).
   query (string, required): Search query

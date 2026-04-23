@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Accel</title>
-  <link rel="stylesheet" href="blob_ui.css?v=202604192400">
+  <link rel="stylesheet" href="blob_ui.css?v=202604231400">
 </head>
 <body>
 
@@ -69,6 +69,17 @@
             Knowledge Base
           </button>
         </div>
+      </div>
+
+      <div class="settings-voice-row">
+        <span class="settings-voice-label">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+          Voice Mode
+        </span>
+        <label class="voice-toggle">
+          <input type="checkbox" id="voiceToggle" onchange="toggleVoice(this.checked)">
+          <span class="voice-toggle-slider"></span>
+        </label>
       </div>
 
       <div class="tool-settings-section">
@@ -137,37 +148,12 @@
         <div class="welcome-blob-icon">
           <div class="mini-blob"></div>
         </div>
-        <h2>Welcome to Local LLM Chat</h2>
-        <p>Connect this UI to your n8n workflow to chat with your local LLM.</p>
-
-        <div class="setup-steps glass-panel">
-          <h3>📋 Quick Setup</h3>
-          <div class="setup-step">
-            <div class="step-num">1</div>
-            <div>In n8n, create a workflow with a <strong>Webhook</strong> node (POST)</div>
-          </div>
-          <div class="setup-step">
-            <div class="step-num">2</div>
-            <div>Connect it to your LLM node — use <code>{{ $json.chatInput }}</code> for user message</div>
-          </div>
-          <div class="setup-step">
-            <div class="step-num">3</div>
-            <div>Add <strong>Respond to Webhook</strong> returning <code>{ "output": "..." }</code></div>
-          </div>
-          <div class="setup-step">
-            <div class="step-num">4</div>
-            <div>Click <strong>"Listen for test event"</strong> on the Webhook node</div>
-          </div>
-          <div class="setup-step">
-            <div class="step-num">5</div>
-            <div>Paste the <strong>Production URL</strong> above and click <strong>Save</strong></div>
-          </div>
-        </div>
-
+        <h2>Accel</h2>
+        <p class="welcome-sub">Your second brain. Ask anything, build anything, remember everything.</p>
         <div class="quick-actions">
-          <button class="quick-action glass-panel" onclick="sendQuickAction('Hello! Tell me about yourself.')">👋 Say Hello</button>
-          <button class="quick-action glass-panel" onclick="sendQuickAction('Explain how n8n webhooks work.')">🔗 Explain Webhooks</button>
-          <button class="quick-action glass-panel" onclick="sendQuickAction('Write a Python hello world script.')">🐍 Python Example</button>
+          <button class="quick-action glass-panel" onclick="sendQuickAction('What do you remember about me?')">What do you remember about me?</button>
+          <button class="quick-action glass-panel" onclick="sendQuickAction('What are you capable of? List your tools.')">What can you do?</button>
+          <button class="quick-action glass-panel" onclick="sendQuickAction('What have we been working on lately?')">What have we been working on?</button>
         </div>
       </div>
     </main>
@@ -209,10 +195,11 @@
 
   <!-- Toast -->
   <div class="toast" id="toast"></div>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   </script>
-  <script src="blob_ui.js?v=202604192400"></script>
+  <script src="blob_ui.js?v=202604231400"></script>
 </body>
 </html>

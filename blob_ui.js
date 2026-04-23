@@ -26,7 +26,7 @@ let pendingImages = []; // Array of { base64, name, size, file }
 let pendingFiles = [];  // Array of { content, name, size, language }
 
 // ===================== INIT =====================
-const UI_VERSION = '202604192400';
+const UI_VERSION = '202604221915';
 let _pollNow = false;
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') _pollNow = true; });
 
@@ -34,11 +34,12 @@ document.addEventListener('DOMContentLoaded', () => {
   debugLog(`UI version: ${UI_VERSION}`, 'info');
   loadSettings();
   setupTextarea();
-  setupImageInput();   
-  setupDragDrop();     
-  setupPasteImage();   
-  createImageViewer(); 
+  setupImageInput();
+  setupDragDrop();
+  setupPasteImage();
+  createImageViewer();
   setupFileDrop();
+  initVoiceStatus();
 });
 
 function loadSettings() {
@@ -70,6 +71,19 @@ const TOOL_LABELS = {
   calendar_delete_event:{ label: 'calendar_delete_event',desc: 'Delete a calendar event',           irreversible: true },
   convert_units:        { label: 'convert_units',        desc: 'Convert physical units',            irreversible: false },
   convert_currency:     { label: 'convert_currency',     desc: 'Convert currencies (live rates)',   irreversible: false },
+  search_knowledge_base:{ label: 'search_knowledge_base',desc: 'Search ingested documents',         irreversible: false },
+  list_knowledge_base:  { label: 'list_knowledge_base',  desc: 'List knowledge base contents',      irreversible: false },
+  ingest_file:          { label: 'ingest_file',          desc: 'Ingest document into knowledge base',irreversible: true },
+  ingest_note:          { label: 'ingest_note',          desc: 'Ingest note into notes collection', irreversible: true },
+  delete_source:        { label: 'delete_source',        desc: 'Remove document from knowledge base',irreversible: true },
+  delete_note:          { label: 'delete_note',          desc: 'Remove note from notes collection', irreversible: true },
+  delete_memory:        { label: 'delete_memory',        desc: 'Delete a memory entry',             irreversible: true },
+  save_memory:          { label: 'save_memory',          desc: 'Save to memory collection',         irreversible: false },
+  search_notes:         { label: 'search_notes',         desc: 'Search Obsidian vault notes',       irreversible: false },
+  list_notes:           { label: 'list_notes',           desc: 'List indexed notes',                irreversible: false },
+  download_file:        { label: 'download_file',        desc: 'Download file from URL',            irreversible: true },
+  add_torrent:          { label: 'add_torrent',          desc: 'Send magnet link to torrent client',irreversible: true },
+  search_audiobooks:    { label: 'search_audiobooks',    desc: 'Search AudioBookBay',               irreversible: false },
 };
 
 let _toolSettings = {};
@@ -125,7 +139,7 @@ async function loadSessionHistory() {
     const resp = await fetch(`${getSplitterBase()}/session?session_id=${sid}&t=${Date.now()}`, { signal: AbortSignal.timeout(8000) });
     if (resp.ok) {
       const data = await resp.json();
-      const messages = data.messages || [];
+      const messages = normalizeServerMessages(data.messages || []);
       if (messages.length > 0) {
         state.chatHistory = messages;
         localStorage.setItem(`accel_chat_${sid}`, JSON.stringify(messages));
@@ -163,10 +177,11 @@ async function loadSessionHistory() {
 
 async function saveSessionToServer(sid, messages) {
   try {
+    const normalized = messages.map(m => m.role === 'bot' ? {...m, role: 'assistant'} : m);
     await fetch(`${getSplitterBase()}/session`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sid, messages }),
+      body: JSON.stringify({ session_id: sid, messages: normalized }),
       signal: AbortSignal.timeout(8000),
     });
   } catch (_) {}
@@ -179,13 +194,24 @@ function startSessionPolling() {
   _pollTimer = setInterval(pollSession, 10000);
 }
 
+function normalizeServerMessages(messages) {
+  return messages.map(m => {
+    if (m.role !== 'assistant') return m;
+    const content = typeof m.content === 'string'
+      ? m.content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+      : m.content;
+    return {...m, role: 'bot', content};
+  });
+}
+
 async function pollSession() {
   if (state.isLoading) return;
   const sid = state.currentSession;
   try {
     const resp = await fetch(`${getSplitterBase()}/session?session_id=${sid}&t=${Date.now()}`, { signal: AbortSignal.timeout(5000) });
     if (!resp.ok) return;
-    const { messages = [] } = await resp.json();
+    const raw = await resp.json();
+    const messages = normalizeServerMessages(raw.messages || []);
     if (!messages.length) return;
 
     const localLen = state.chatHistory.length;
@@ -193,32 +219,42 @@ async function pollSession() {
     const localLast = state.chatHistory[localLen - 1];
     const serverLast = messages[serverLen - 1];
 
-    // Already in sync
+    // Already in sync by length + last message (trim handles any whitespace differences)
     if (localLen === serverLen &&
         localLast?.role === serverLast?.role &&
-        localLast?.content === serverLast?.content) return;
+        localLast?.content?.trim() === serverLast?.content?.trim()) return;
 
-    // Server has more and local is a prefix — append only (common case: other device sent)
-    if (serverLen > localLen &&
-        localLen > 0 &&
-        localLast?.content === messages[localLen - 1]?.content &&
-        localLast?.role === messages[localLen - 1]?.role) {
-      const newMsgs = messages.slice(localLen);
+    // Local is ahead — server hasn't saved yet, don't wipe
+    if (localLen >= serverLen) return;
+
+    // Server's last bot message matches local's — only difference is intermediate tool messages,
+    // which the server stores but local doesn't. Silently sync state without re-rendering.
+    const localLastBot = [...state.chatHistory].reverse().find(m => m.role === 'bot');
+    const serverLastBot = [...messages].reverse().find(m => m.role === 'bot');
+    if (localLastBot && serverLastBot && localLastBot.content?.trim() === serverLastBot.content?.trim()) {
+      state.chatHistory = messages;
+      localStorage.setItem(`accel_chat_${sid}`, JSON.stringify(messages));
+      return;
+    }
+
+    // Server has a new bot message that local doesn't — sent from another device, append it
+    const localLastUser = [...state.chatHistory].reverse().find(m => m.role === 'user');
+    const serverLastUser = [...messages].reverse().find(m => m.role === 'user');
+    if (serverLastBot && !localLastBot && localLastUser?.content === serverLastUser?.content) {
       state.chatHistory = messages;
       localStorage.setItem(`accel_chat_${sid}`, JSON.stringify(messages));
       document.getElementById('welcomeMessage').style.display = 'none';
-      newMsgs.forEach((msg) =>
-        renderMessage(msg.role, msg.content, msg.timestamp, false, msg.images || [], msg.files || [], msg.thoughts || '')
-      );
+      renderMessage(serverLastBot.role, serverLastBot.content, serverLastBot.timestamp, false, [], [], serverLastBot.thoughts || '');
       scrollToBottom();
       return;
     }
 
-    // Histories diverged (stale local from old session, or device switch) — full replace
+    // Genuine divergence (cleared session, different device with different history) — full replace
     state.chatHistory = messages;
     localStorage.setItem(`accel_chat_${sid}`, JSON.stringify(messages));
     const container = document.getElementById('chatContainer');
     container.innerHTML = '';
+    document.getElementById('welcomeMessage').style.display = 'none';
     messages.forEach((msg) =>
       renderMessage(msg.role, msg.content, msg.timestamp, false, msg.images || [], msg.files || [], msg.thoughts || '')
     );
@@ -239,6 +275,25 @@ function toggleDebug() {
 
 function toggleKnowledge() {
   document.getElementById('knowledgePanel').classList.toggle('open');
+}
+
+async function toggleVoice(enabled) {
+  try {
+    const res = await fetch('/voice/toggle?enabled=' + enabled, { method: 'POST' });
+    const data = await res.json();
+    document.getElementById('voiceToggle').checked = data.enabled;
+  } catch (e) {
+    console.error('Voice toggle failed:', e);
+    document.getElementById('voiceToggle').checked = !enabled;
+  }
+}
+
+async function initVoiceStatus() {
+  try {
+    const res = await fetch('/voice/status');
+    const data = await res.json();
+    document.getElementById('voiceToggle').checked = data.enabled;
+  } catch {}
 }
 
 
@@ -637,7 +692,8 @@ function finalizeStreamingMessage(msgEl, text, thinking, save = true) {
   // append meta row
   const meta = document.createElement('div');
   meta.className = 'message-meta';
-  meta.innerHTML = `<span>${formatTimestamp(getTimestamp())}</span><button class="copy-btn" onclick="copyMessage(this)">📋 Copy</button>`;
+  msgEl.dataset.rawContent = text;
+  meta.innerHTML = `<span>${formatTimestamp(getTimestamp())}</span><button class="copy-btn" onclick="copyMessage(this)" title="Copy">${SVG_COPY}</button>`;
   body.appendChild(meta);
 
   if (save) {
@@ -710,10 +766,11 @@ function renderMessage(role, content, timestamp, save = true, images = [], files
       <div class="message-content">${formatContent(content)}</div>
       <div class="message-meta">
         <span>${formatTimestamp(timestamp || getTimestamp())}</span>
-        <button class="copy-btn" onclick="copyMessage(this)">📋 Copy</button>
+        <button class="copy-btn" onclick="copyMessage(this)" title="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg></button>
       </div>
     </div>
   `;
+  msgDiv.dataset.rawContent = content;
   container.appendChild(msgDiv);
 
   if (save) {
@@ -775,17 +832,11 @@ function removeTypingIndicator() {
 }
 
 function formatContent(text) {
-  let html = escapeHtml(text);
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
-  html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
-  html = html.replace(
-    /`([^`]+)`/g,
-    '<code>$1</code>'
-  );
-  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-  html = html.replace(/\n/g, '<br>');
-  return html;
+  try {
+    return marked.parse(text);
+  } catch (_) {
+    return escapeHtml(text).replace(/\n/g, '<br>');
+  }
 }
 
 function escapeHtml(text) {
@@ -794,12 +845,39 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+const SVG_COPY = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const SVG_CHECK = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+function _doCopyToast(btn) {
+  btn.innerHTML = SVG_CHECK;
+  btn.style.color = '#22c55e';
+  const existing = btn.parentElement.querySelector('.copy-toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('span');
+  toast.className = 'copy-toast';
+  toast.textContent = 'Copied!';
+  btn.parentElement.appendChild(toast);
+  setTimeout(() => { btn.innerHTML = SVG_COPY; btn.style.color = ''; toast.remove(); }, 2000);
+}
+
+function _fallbackCopy(text, btn) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); _doCopyToast(btn); } catch (_) {}
+  document.body.removeChild(ta);
+}
+
 function copyMessage(btn) {
-  const content = btn.closest('.message').querySelector('.message-content').textContent;
-  navigator.clipboard.writeText(content).then(() => {
-    btn.textContent = '✅ Copied';
-    setTimeout(() => (btn.textContent = '📋 Copy'), 2000);
-  });
+  const msgEl = btn.closest('.message');
+  const raw = msgEl?.dataset.rawContent || msgEl?.querySelector('.message-content')?.textContent || '';
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(raw).then(() => _doCopyToast(btn)).catch(() => _fallbackCopy(raw, btn));
+  } else {
+    _fallbackCopy(raw, btn);
+  }
 }
 
 // ===================== IMAGE HANDLING =====================
@@ -1119,7 +1197,7 @@ async function sendMessage() {
 
   const payload = {
     chatInput: messageText,
-    chatHistory: state.chatHistory.slice(-60),
+    chatHistory: state.chatHistory.slice(-60).map(m => m.role === 'bot' ? {...m, role: 'assistant'} : m),
     sessionId: getSessionId(),
   };
 
@@ -1211,7 +1289,9 @@ async function sendMessage() {
                 area.appendChild(b);
               }
             } else if (chunk.type === 'error') {
-              finalizeStreamingMessage(msgEl, accText || chunk.text, accThinking, false);
+              // Save whatever we have so pollSession doesn't see a mismatch and wipe the DOM
+              const saveOnError = accText.trim().length > 0;
+              finalizeStreamingMessage(msgEl, accText || chunk.text, accThinking, saveOnError);
               renderError(chunk.text);
               updateStatus('error');
               return;
@@ -1275,7 +1355,7 @@ function extractResponse(data, field) {
 
 // ===================== UTILITIES =====================
 function getSplitterBase() {
-  return `http://${window.location.hostname}:9200`;
+  return window.location.origin;
 }
 
 function getSessionId() {

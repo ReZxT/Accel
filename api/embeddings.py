@@ -18,7 +18,11 @@ async def _wait_ready(port: int, timeout: int = 30) -> bool:
         for _ in range(timeout):
             await asyncio.sleep(1)
             try:
-                r = await client.get(f"http://localhost:{port}/health", timeout=2)
+                r = await client.post(
+                    f"http://localhost:{port}/v1/embeddings",
+                    json={"model": "local", "input": ["ping"]},
+                    timeout=3,
+                )
                 if r.status_code == 200:
                     return True
             except Exception:
