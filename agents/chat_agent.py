@@ -1,10 +1,15 @@
 import asyncio
+import hashlib
 import json
+import logging
 import re
+import time
 import uuid
 import httpx
 from datetime import datetime
 from typing import AsyncGenerator
+
+log = logging.getLogger(__name__)
 
 from memory.facts import search_facts, search_procedures
 from memory.sources import search_sources
@@ -15,6 +20,7 @@ from memory.extraction import extract_after_response
 from memory.episodes import maybe_compress
 from curator.preflight import run_preflight, get_thinking_budget
 from router.classifier import RouteDecision
+from router.tier0 import Tier0Result
 from tools.llm import chat_complete
 from tools.tool_parser import parse_xml_tool_calls, strip_tool_calls
 from tools.tool_descriptions import TOOLS_SYSTEM_BLOCK
@@ -24,6 +30,26 @@ from config import config
 
 MAX_TOOL_ITERATIONS = 25
 TOOL_CONTINUE_BATCH = 25
+STALL_WINDOW = 3  # consecutive duplicate rounds before stall is declared
+
+
+def _fingerprint_calls(tool_calls: list[dict]) -> str:
+    """Hash the tool names + args for this round to detect repeated call patterns."""
+    parts = []
+    for tc in sorted(tool_calls, key=lambda t: t["name"]):
+        parts.append(f"{tc['name']}:{json.dumps(tc['args'], sort_keys=True)}")
+    return hashlib.md5("|".join(parts).encode()).hexdigest()
+
+
+def _fingerprint_text(text: str) -> str:
+    """Hash response text (normalized) to detect repeated outputs."""
+    return hashlib.md5(text.strip().encode()).hexdigest()
+
+
+def _assistant_content(text: str, thinking: str) -> str:
+    if thinking:
+        return f"<think>{thinking}</think>\n{text}" if text else f"<think>{thinking}</think>"
+    return text
 
 SYSTEM_TEMPLATE = """You are {personality}, an AI assistant.
 Date/time: {datetime}
@@ -92,16 +118,27 @@ async def _run_agentic_loop(
     budget_kwargs: dict,
     session_id: str,
     tool_settings: dict,
+    cancel: asyncio.Event | None = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming agentic loop: call model, parse tool calls, execute, repeat."""
     nudged = False
+    stall_nudged = False
     iterations = 0
+    loop_t0 = time.monotonic()
+    recent_call_fps: list[str] = []
+    recent_text_fps: list[str] = []
     while True:
+        if cancel and cancel.is_set():
+            yield json.dumps({"type": "text", "text": "\n\n*(Cancelled.)*"})
+            break
+
         response_text = ""
         thinking_text = ""
 
         # stream model response — buffer text, stream thinking live
         async for chunk in await chat_complete(messages, stream=True, **budget_kwargs):
+            if cancel and cancel.is_set():
+                break
             choice = chunk.get("choices", [{}])[0]
             delta = choice.get("delta", {})
             if delta.get("reasoning_content"):
@@ -109,6 +146,11 @@ async def _run_agentic_loop(
                 yield json.dumps({"type": "thinking", "text": delta["reasoning_content"]})
             if delta.get("content"):
                 response_text += delta["content"]
+
+        if cancel and cancel.is_set():
+            yield json.dumps({"type": "text", "text": "\n\n*(Cancelled.)*"})
+            messages.append({"role": "assistant", "content": response_text or "(cancelled)"})
+            break
 
         # extract <think> blocks from content field (DIMOE sometimes puts thinking there)
         think_blocks = re.findall(r"<think>([\s\S]*?)</think>", response_text, re.IGNORECASE)
@@ -126,12 +168,6 @@ async def _run_agentic_loop(
         if clean_text:
             yield json.dumps({"type": "text", "text": clean_text})
 
-        # Build assistant content — embed thinking so it stays in context
-        def _assistant_content(text: str, thinking: str) -> str:
-            if thinking:
-                return f"<think>{thinking}</think>\n{text}" if text else f"<think>{thinking}</think>"
-            return text
-
         if not tool_calls:
             # model produced no text and no tool calls — nudge once then stop
             if not clean_text and not nudged:
@@ -144,6 +180,33 @@ async def _run_agentic_loop(
             break
 
         iterations += 1
+
+        # -- stall detection --
+        call_fp = _fingerprint_calls(tool_calls)
+        text_fp = _fingerprint_text(response_text)
+        recent_call_fps.append(call_fp)
+        recent_text_fps.append(text_fp)
+        if len(recent_call_fps) > STALL_WINDOW:
+            recent_call_fps.pop(0)
+            recent_text_fps.pop(0)
+
+        calls_repeating = len(recent_call_fps) == STALL_WINDOW and len(set(recent_call_fps)) == 1
+        text_repeating = len(recent_text_fps) == STALL_WINDOW and len(set(recent_text_fps)) == 1
+
+        if calls_repeating or text_repeating:
+            if stall_nudged:
+                log.warning("stall: force-stopping after nudge failed  session=%s  iterations=%d", session_id, iterations)
+                yield json.dumps({"type": "text", "text": "\n\n*(Stopped — repeated actions with no progress.)*"})
+                messages.append({"role": "assistant", "content": _assistant_content(response_text, thinking_text)})
+                break
+            stall_nudged = True
+            log.warning("stall: detected repeated pattern  session=%s  iterations=%d", session_id, iterations)
+            messages.append({"role": "assistant", "content": _assistant_content(response_text, thinking_text)})
+            messages.append({"role": "user", "content": "You are repeating the same actions. Stop using tools and provide your best answer with the information you already have."})
+            recent_call_fps.clear()
+            recent_text_fps.clear()
+            continue
+
         if iterations >= MAX_TOOL_ITERATIONS:
             request_id = str(uuid.uuid4())
             approval.register(request_id)
@@ -167,6 +230,8 @@ async def _run_agentic_loop(
 
         tool_result_parts = []
         for tc in tool_calls:
+            if cancel and cancel.is_set():
+                break
             tool_name = tc["name"]
             tool_args = tc["args"]
             tool_id = tc["id"]
@@ -192,14 +257,21 @@ async def _run_agentic_loop(
 
             # emit tool_call event (shown in UI)
             yield json.dumps({"type": "tool_call", "tool": tool_name, "args": tool_args})
+            log.info("tool_call: %s  args=%s  session=%s", tool_name, json.dumps(tool_args)[:200], session_id)
 
-            tool_task = asyncio.create_task(execute_tool(tool_name, tool_args))
-            while not tool_task.done():
-                try:
-                    await asyncio.wait_for(asyncio.shield(tool_task), timeout=15)
-                except asyncio.TimeoutError:
-                    yield json.dumps({"type": "heartbeat"})
+            tool_t0 = time.monotonic()
+            tool_task = asyncio.ensure_future(execute_tool(tool_name, tool_args, session_id))
+            while True:
+                done, _ = await asyncio.wait({tool_task}, timeout=15)
+                if done:
+                    break
+                if cancel and cancel.is_set():
+                    tool_task.cancel()
+                    yield json.dumps({"type": "text", "text": "\n\n*(Cancelled.)*"})
+                    return
+                yield json.dumps({"type": "heartbeat"})
             result = tool_task.result()
+            log.info("tool_done: %s  %.1fs  session=%s", tool_name, time.monotonic() - tool_t0, session_id)
 
             # image result (e.g. screenshot_url)
             if isinstance(result, dict) and result.get("__type") == "image":
@@ -214,6 +286,21 @@ async def _run_agentic_loop(
                     "mime_type": mime,
                     "url": url,
                 })
+            elif isinstance(result, dict) and result.get("__type") == "canvas_command":
+                yield json.dumps({"type": "canvas_command", "command": result.get("command"), "data": result.get("data")})
+                summary = result.get("summary", "Canvas updated.")
+                yield json.dumps({"type": "tool_result", "tool": tool_name, "output": summary})
+                tool_result_parts.append(
+                    f"<tool_result>\n<function={tool_name}>\n{summary}\n</function>\n</tool_result>"
+                )
+            elif isinstance(result, dict) and result.get("__type") == "play_queue":
+                tracks = result.get("tracks", [])
+                summary = f"Loading {len(tracks)} track(s) into player: " + ", ".join(t.get("title", "?") for t in tracks[:3])
+                yield json.dumps({"type": "play_queue", "tracks": tracks})
+                yield json.dumps({"type": "tool_result", "tool": tool_name, "output": summary})
+                tool_result_parts.append(
+                    f"<tool_result>\n<function={tool_name}>\n{summary}\n</function>\n</tool_result>"
+                )
             elif isinstance(result, dict) and result.get("__type") == "error":
                 text = result.get("text", "Tool error")
                 yield json.dumps({"type": "tool_result", "tool": tool_name, "output": text})
@@ -251,7 +338,13 @@ async def run_chat(
     images: list[dict] | None = None,
     route: RouteDecision | None = None,
     voice_mode: bool = False,
+    cancel: asyncio.Event | None = None,
+    tier0: Tier0Result | None = None,
 ) -> AsyncGenerator[str, None]:
+    req_t0 = time.monotonic()
+    log.info("run_chat: session=%s  voice=%s  tier0=%s  input=%.80s",
+             session_id, voice_mode, tier0.intent if tier0 else None, chat_input)
+
     if not chat_history:
         chat_history = await load_session(session_id)
 
@@ -261,17 +354,23 @@ async def run_chat(
     context_state = profile.get("context_state", "free")
     tool_settings = await get_tool_settings()
 
-    preflight = await run_preflight(
-        recent_turns=chat_history[-3:],
-        current_personality=profile.get("current_personality", "Casual"),
-        context_state=context_state,
-    )
-    personality = preflight["personality"]
-    thinking_depth = preflight["thinking_depth"]
-    budget = get_thinking_budget(thinking_depth)
+    if tier0 and tier0.skip_preflight:
+        personality = tier0.force_personality or "Casual"
+        thinking_depth = tier0.force_thinking_depth or "light"
+        budget = get_thinking_budget(thinking_depth)
+        log.info("tier0 skip_preflight: personality=%s  depth=%s", personality, thinking_depth)
+    else:
+        preflight = await run_preflight(
+            recent_turns=chat_history[-3:],
+            current_personality=profile.get("current_personality", "Casual"),
+            context_state=context_state,
+        )
+        personality = preflight["personality"]
+        thinking_depth = preflight["thinking_depth"]
+        budget = get_thinking_budget(thinking_depth)
 
-    use_retrieval = route.use_retrieval if route else True
-    if use_retrieval:
+    skip_retrieval = (tier0 and tier0.skip_retrieval) or (route and not route.use_retrieval)
+    if not skip_retrieval:
         facts, procedures, sources, notes = await asyncio.gather(
             search_facts(chat_input, top_k=5),
             search_procedures(chat_input, top_k=4),
@@ -342,7 +441,7 @@ async def run_chat(
     response_text = ""
     thinking_text = ""
 
-    async for event_json in _run_agentic_loop(messages, budget_kwargs, session_id, tool_settings):
+    async for event_json in _run_agentic_loop(messages, budget_kwargs, session_id, tool_settings, cancel=cancel):
         event = json.loads(event_json)
         if event["type"] == "text":
             response_text += event["text"]
@@ -377,3 +476,4 @@ async def run_chat(
         new_history.append(final_assistant)
     await save_session(session_id, new_history)
     extract_after_response(chat_input, response_text)
+    log.info("run_chat done: session=%s  %.1fs  response_len=%d", session_id, time.monotonic() - req_t0, len(response_text))

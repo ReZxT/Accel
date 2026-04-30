@@ -67,6 +67,13 @@ async def calendar_add_event(
         except ValueError:
             return "Error: time must be HH:MM format"
     db = _conn()
+    existing = db.execute(
+        "SELECT id FROM events WHERE title=? AND date=? AND COALESCE(time,'')=COALESCE(?,'')",
+        (title, date, time or ""),
+    ).fetchone()
+    if existing:
+        db.close()
+        return f"Event already exists (id={existing['id']}): '{title}' on {date}. No duplicate created."
     cur = db.execute(
         "INSERT INTO events (title, date, time, description, all_day, recurring) VALUES (?,?,?,?,?,?)",
         (title, date, time, description, 0 if time else 1, recurring or "none"),

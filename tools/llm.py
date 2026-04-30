@@ -2,6 +2,7 @@ import json
 import httpx
 from typing import AsyncGenerator
 from config import config
+from circuit_breaker import breakers
 
 
 async def chat_complete(messages: list[dict], stream: bool = False, **kwargs) -> dict | AsyncGenerator:
@@ -13,46 +14,78 @@ async def chat_complete(messages: list[dict], stream: bool = False, **kwargs) ->
     }
     if stream:
         return _stream_chat(payload)
-    async with httpx.AsyncClient(timeout=120) as client:
-        r = await client.post(f"{config.chat_url}/chat/completions", json=payload)
-        r.raise_for_status()
-        return r.json()
+    cb = breakers["chat"]
+    if not cb.can_execute():
+        raise ConnectionError("Chat model circuit is open")
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            r = await client.post(f"{config.chat_url}/chat/completions", json=payload)
+            r.raise_for_status()
+            cb.record_success()
+            return r.json()
+    except Exception:
+        cb.record_failure()
+        raise
 
 
 async def _stream_chat(payload: dict) -> AsyncGenerator[dict, None]:
-    async with httpx.AsyncClient(timeout=120) as client:
-        async with client.stream("POST", f"{config.chat_url}/chat/completions", json=payload) as r:
-            r.raise_for_status()
-            async for line in r.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                data = line[6:]
-                if data == "[DONE]":
-                    break
-                try:
-                    yield json.loads(data)
-                except json.JSONDecodeError:
-                    pass
+    cb = breakers["chat"]
+    if not cb.can_execute():
+        raise ConnectionError("Chat model circuit is open")
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream("POST", f"{config.chat_url}/chat/completions", json=payload) as r:
+                r.raise_for_status()
+                async for line in r.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:]
+                    if data == "[DONE]":
+                        break
+                    try:
+                        yield json.loads(data)
+                    except json.JSONDecodeError:
+                        pass
+        cb.record_success()
+    except Exception:
+        cb.record_failure()
+        raise
 
 
 async def curator_complete(messages: list[dict], temperature: float = 0.1) -> str:
+    cb = breakers["curator"]
+    if not cb.can_execute():
+        return ""
     payload = {
         "model": config.curator_model,
         "messages": messages,
         "stream": False,
         "temperature": temperature,
     }
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(f"{config.curator_url}/chat/completions", json=payload)
-        r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(f"{config.curator_url}/chat/completions", json=payload)
+            r.raise_for_status()
+            cb.record_success()
+            return r.json()["choices"][0]["message"]["content"]
+    except Exception:
+        cb.record_failure()
+        return ""
 
 
 async def embed(text: str) -> list[float]:
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(
-            f"{config.embed_url}/embeddings",
-            json={"model": config.embed_model, "input": text},
-        )
-        r.raise_for_status()
-        return r.json()["data"][0]["embedding"]
+    cb = breakers["embeddings"]
+    if not cb.can_execute():
+        raise ConnectionError("Embeddings circuit is open")
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                f"{config.embed_url}/embeddings",
+                json={"model": config.embed_model, "input": text},
+            )
+            r.raise_for_status()
+            cb.record_success()
+            return r.json()["data"][0]["embedding"]
+    except Exception:
+        cb.record_failure()
+        raise

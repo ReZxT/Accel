@@ -8,3 +8,7 @@ build/
 .venv/
 venv/
 data/*.db
+logs/
+cookies/
+canvas_state.json
+*.mp3

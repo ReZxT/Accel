@@ -184,6 +184,10 @@ body {
   margin: 0 auto;
 }
 
+.app-layout.canvas-open {
+  max-width: 100%;
+}
+
 /* Session sidebar */
 .session-sidebar {
   display: flex;
@@ -790,6 +794,20 @@ select.glass-input option {
   animation: miniBlobMorph 8s ease-in-out infinite;
 }
 
+.message.system .message-avatar {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.message.system .message-content {
+  background: rgba(59, 130, 246, 0.06);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-radius: var(--radius-lg);
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
 .message-content {
   padding: 12px 16px;
   border-radius: var(--radius-lg);
@@ -884,6 +902,24 @@ select.glass-input option {
   padding-left: 1.4em;
 }
 .message-content li { margin: 2px 0; }
+
+/* Paragraph spacing inside messages */
+.message-content p {
+  margin: 4px 0;
+}
+
+/* Links inside messages */
+.message-content a {
+  color: #7eb8f7;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(126, 184, 247, 0.35);
+  padding-bottom: 1px;
+  line-height: 1.4;
+}
+.message-content a:hover {
+  color: #a8d0fb;
+  border-bottom-color: rgba(168, 208, 251, 0.6);
+}
 
 /* Code blocks inside messages */
 .message-content pre {
@@ -1021,6 +1057,16 @@ select.glass-input option {
   transform: scale(0.92);
   box-shadow: none;
   cursor: default;
+}
+
+.send-btn.cancel-mode,
+.send-btn.cancel-mode:disabled {
+  background: #e04040;
+  box-shadow: 0 4px 20px rgba(224, 64, 64, 0.3);
+  opacity: 1;
+  transform: none;
+  cursor: pointer;
+  pointer-events: auto;
 }
 
 .input-footer {
@@ -1788,3 +1834,160 @@ input, textarea, select {
 .voice-toggle input:checked + .voice-toggle-slider::before {
   transform: translateX(16px);
 }
+
+/* ===================== CANVAS PANEL ===================== */
+.content-area {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  flex-direction: row;
+}
+
+.content-area > .chat-messages {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.canvas-panel {
+  width: 50%;
+  flex-shrink: 0;
+  border-left: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  background: #1a1a2e;
+  position: relative;
+}
+
+#canvasRoot {
+  position: absolute;
+  inset: 0;
+}
+
+#canvasRoot .tlui-layout {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: 100%;
+}
+
+#canvasRoot .tlui-toolbar__tools__list {
+  display: flex;
+  flex-direction: row;
+}
+
+#canvasRoot .tlui-toolbar__inner {
+  display: flex;
+  flex-direction: row;
+}
+
+/* ===================== NOW PLAYING WIDGET ===================== */
+#nowPlayingWidget {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: rgba(255,255,255,0.04);
+  border-top: 1px solid var(--glass-border);
+  border-bottom: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+
+#npArt {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.06);
+}
+
+.np-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.np-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.np-artist {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.np-progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.np-progress-track {
+  flex: 1;
+  height: 3px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.np-progress-fill {
+  height: 100%;
+  background: #7eb8f7;
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.9s linear;
+}
+
+.np-time {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.np-duration {
+  opacity: 0.6;
+}
+
+.np-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.np-controls button {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+.np-controls button:hover {
+  color: var(--text-primary);
+  background: rgba(255,255,255,0.08);
+}
+
+#npPlayBtn {
+  color: #7eb8f7 !important;
+}
+

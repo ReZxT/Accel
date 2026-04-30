@@ -4,7 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Accel</title>
-  <link rel="stylesheet" href="blob_ui.css?v=202604231400">
+  <link rel="stylesheet" href="blob_ui.css?v=202604252100">
+  <link rel="stylesheet" href="https://unpkg.com/tldraw@2.4.0/tldraw.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "react":            "https://esm.sh/react@18.3.1",
+      "react-dom":        "https://esm.sh/react-dom@18.3.1",
+      "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+      "tldraw":           "https://esm.sh/tldraw@2.4.0?deps=react@18.3.1,react-dom@18.3.1"
+    }
+  }
+  </script>
 </head>
 <body>
 
@@ -18,7 +29,7 @@
   </div>
 
   <!-- App layout -->
-  <div class="app-layout">
+  <div class="app-layout" id="appLayout">
 
   <!-- Session sidebar -->
   <nav class="session-sidebar" id="sessionSidebar"></nav>
@@ -36,6 +47,11 @@
         </div>
       </div>
       <div class="header-actions">
+        <button class="icon-btn" id="canvasToggleBtn" onclick="toggleCanvas()" title="Toggle canvas" style="display:none">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>
+          </svg>
+        </button>
         <button class="icon-btn" onclick="toggleSettings()" title="Settings">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
@@ -142,6 +158,9 @@
       </div>
     </div>
 
+    <!-- Chat + Canvas split wrapper -->
+    <div class="content-area" id="contentArea">
+
     <!-- Chat Messages -->
     <main class="chat-messages" id="chatContainer">
       <div class="welcome-state" id="welcomeMessage">
@@ -157,6 +176,41 @@
         </div>
       </div>
     </main>
+
+    <!-- Canvas panel (Architecture session) -->
+    <div id="canvasPanel" class="canvas-panel" style="display:none">
+      <div id="canvasRoot"></div>
+    </div>
+
+    </div><!-- /content-area -->
+
+    <!-- Now Playing Widget (Music session only) -->
+    <audio id="npAudio" preload="auto"></audio>
+    <div id="nowPlayingWidget" style="display:none">
+      <img id="npArt" src="" alt="" />
+      <div class="np-info">
+        <span id="npTitle" class="np-title"></span>
+        <span id="npArtist" class="np-artist"></span>
+        <div class="np-progress-wrap" onclick="seekFromClick(event)">
+          <div class="np-progress-track">
+            <div id="npProgressBar" class="np-progress-fill"></div>
+          </div>
+          <span id="npPosition" class="np-time">0:00</span>
+          <span id="npDuration" class="np-time np-duration"></span>
+        </div>
+      </div>
+      <div class="np-controls">
+        <button onclick="playerAction('previous')" title="Previous">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="19,20 9,12 19,4"/><rect x="5" y="4" width="3" height="16"/></svg>
+        </button>
+        <button id="npPlayBtn" onclick="playerAction('play_pause')" title="Play/Pause">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+        </button>
+        <button onclick="playerAction('next')" title="Next">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,4 15,12 5,20"/><rect x="16" y="4" width="3" height="16"/></svg>
+        </button>
+      </div>
+    </div>
 
     <!-- Input Area -->
     <footer class="chat-input-area">
@@ -177,7 +231,7 @@
           placeholder="Type your message... (Shift+Enter for new line)"
           rows="1"
         ></textarea>
-        <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Send Message">
+        <button class="send-btn" id="sendBtn" title="Send Message">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="22" y1="2" x2="11" y2="13"></line>
             <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
@@ -200,6 +254,115 @@
   <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   </script>
-  <script src="blob_ui.js?v=202604231400"></script>
+  <script src="blob_ui.js?v=202604252100"></script>
+  <script type="module">
+    import React, { useCallback } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { Tldraw, createShapeId } from 'tldraw'; // resolved via importmap to tldraw@2.4.0
+
+    function buildProps(s) {
+      const color = s.color || 'blue';
+      const size  = s.size  || 'm';
+      const text  = s.text  || '';
+      const font  = 'draw';
+      switch (s.type) {
+        case 'text':
+          return { color, size, text, font, align: 'middle', autoSize: true, w: 8, scale: 1 };
+        case 'note':
+          return { color, size, text, font, align: 'middle', verticalAlign: 'middle',
+                   growY: 0, fontSizeAdjustment: 0, url: '' };
+        case 'geo':
+          return { geo: s.geo || 'rectangle', color, size, text, font,
+                   fill: s.fill || 'none', dash: 'draw',
+                   align: 'middle', verticalAlign: 'middle',
+                   growY: 0, labelColor: 'black', url: '',
+                   w: s.w || 200, h: s.h || 80 };
+        case 'arrow':
+          return { color, size, text, font, dash: 'draw',
+                   arrowheadStart: 'none', arrowheadEnd: 'arrow',
+                   fill: 'none', labelColor: 'black', bend: 0,
+                   start: { type: 'point', x: 0, y: 0 },
+                   end:   { type: 'point', x: s.w || 200, y: 0 } };
+        default:
+          return { color, size, text, font };
+      }
+    }
+
+    function syncBounds(editor) {
+      const el = document.getElementById('canvasRoot');
+      if (!el || !editor) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return;
+      const Box = editor.getViewportScreenBounds().constructor;
+      editor.updateViewportScreenBounds(new Box(rect.x, rect.y, rect.width, rect.height));
+    }
+
+    function Canvas() {
+      const handleMount = useCallback(async (editor) => {
+        window._tldrawEditor = editor;
+
+        try {
+          const resp = await fetch('/canvas/state');
+          const snapshot = await resp.json();
+          if (snapshot && snapshot.store) {
+            editor.store.loadSnapshot(snapshot);
+          }
+        } catch (_) {}
+
+        // Save state to server on every change (debounced 1s)
+        let _saveTimer = null;
+        editor.store.listen(() => {
+          clearTimeout(_saveTimer);
+          _saveTimer = setTimeout(() => {
+            const snapshot = editor.store.getSnapshot();
+            fetch('/canvas/state', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(snapshot),
+            }).catch(() => {});
+          }, 1000);
+        }, { scope: 'document', source: 'all' });
+
+        setTimeout(() => syncBounds(editor), 100);
+      }, []);
+      return React.createElement(Tldraw, { onMount: handleMount });
+    }
+
+    // Mount lazily when the canvas panel first becomes visible
+    let _mounted = false;
+    window._mountTldraw = function() {
+      if (_mounted) {
+        setTimeout(() => syncBounds(window._tldrawEditor), 50);
+        return;
+      }
+      _mounted = true;
+      const root = document.getElementById('canvasRoot');
+      if (root) createRoot(root).render(React.createElement(Canvas));
+    };
+
+    // Auto-mount if canvas panel was already shown before module loaded (session restore race)
+    if (document.getElementById('canvasPanel')?.style.display !== 'none') {
+      window._mountTldraw();
+    }
+
+    // Expose command API for blob_ui.js
+    window._canvasCommand = function(type, data) {
+      const ed = window._tldrawEditor;
+      if (!ed) return;
+      if (type === 'tldraw:create_shapes') {
+        ed.createShapes((data.shapes || []).map(s => ({
+          id: createShapeId(),
+          type: s.type || 'note',
+          x: s.x ?? 100,
+          y: s.y ?? 100,
+          props: buildProps(s),
+        })));
+        ed.zoomToFit({ animation: { duration: 300 } });
+      } else if (type === 'tldraw:clear') {
+        ed.selectAll();
+        ed.deleteShapes(ed.getSelectedShapeIds());
+      }
+    };
+  </script>
 </body>
 </html>

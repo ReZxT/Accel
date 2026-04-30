@@ -1,14 +1,19 @@
-from memory.facts import get_client, _rerank_by_recency
-from tools.llm import embed
+import logging
+from memory.facts import get_client, _rerank_by_recency, _hybrid_search
+from circuit_breaker import breakers
+
+log = logging.getLogger(__name__)
 
 
 async def search_notes(query: str, top_k: int = 5, threshold: float = 0.5) -> list[dict]:
-    vector = await embed(query)
-    results = await get_client().query_points(
-        collection_name="notes",
-        query=vector,
-        limit=top_k * 2,
-        score_threshold=threshold,
-        with_payload=True,
-    )
-    return _rerank_by_recency(results.points, top_k)
+    cb = breakers["qdrant"]
+    if not cb.can_execute():
+        return []
+    try:
+        results = await _hybrid_search("notes", query, top_k, threshold)
+        cb.record_success()
+        return _rerank_by_recency(results, top_k)
+    except Exception as e:
+        cb.record_failure()
+        log.warning("search_notes failed: %s", e)
+        return []

@@ -1,6 +1,9 @@
+import logging
 import re
 from dataclasses import dataclass, field
 from tools.llm import curator_complete
+
+log = logging.getLogger(__name__)
 
 # ── Size thresholds (chars) ──────────────────────────────────────────────────
 SIZE_SHORT  = 500
@@ -106,17 +109,21 @@ async def classify(
     else:
         input_mode = "text_only"
 
+    def _decide(d: RouteDecision) -> RouteDecision:
+        log.info("route: %s/%s  size=%s  mode=%s", d.route_family, d.pipeline, d.size_class, d.input_mode)
+        return d
+
     # ── multimodal shortcut ───────────────────────────────────────────────────
     if has_images:
         is_placeholder = not chat_input.strip() or chat_input.strip().startswith("[")
-        return RouteDecision(
+        return _decide(RouteDecision(
             route_family="multimodal",
             text_type="chat",
             pipeline="multimodal",
             size_class=_size_class(chat_input),
             input_mode=input_mode,
             use_retrieval=not is_placeholder,
-        )
+        ))
 
     # ── file-based preprocessed_text ─────────────────────────────────────────
     if has_files:
@@ -136,7 +143,7 @@ async def classify(
             pipeline = "document_analysis"
 
         size = _size_class(full_text)
-        return RouteDecision(
+        return _decide(RouteDecision(
             route_family="preprocessed_text",
             text_type=text_type,
             pipeline=pipeline,
@@ -147,14 +154,14 @@ async def classify(
             needs_long_processing=size in ("long", "huge"),
             retrieval_after_preprocessing=True,
             nl_prefix=_extract_nl_prefix(chat_input),
-        )
+        ))
 
     # ── text-only classification ──────────────────────────────────────────────
     text = chat_input.strip()
     size = _size_class(text)
 
     if _looks_like_logs(text):
-        return RouteDecision(
+        return _decide(RouteDecision(
             route_family="preprocessed_text",
             text_type="logs",
             pipeline="log_analysis",
@@ -164,10 +171,10 @@ async def classify(
             needs_long_processing=size in ("long", "huge"),
             retrieval_after_preprocessing=True,
             nl_prefix=_extract_nl_prefix(text),
-        )
+        ))
 
     if _looks_like_code(text):
-        return RouteDecision(
+        return _decide(RouteDecision(
             route_family="preprocessed_text",
             text_type="code",
             pipeline="structured_analysis",
@@ -177,10 +184,10 @@ async def classify(
             needs_long_processing=size in ("long", "huge"),
             retrieval_after_preprocessing=True,
             nl_prefix=_extract_nl_prefix(text),
-        )
+        ))
 
     if _looks_like_chat_dump(text):
-        return RouteDecision(
+        return _decide(RouteDecision(
             route_family="preprocessed_text",
             text_type="chat_dump",
             pipeline="chat_dump_analysis",
@@ -188,11 +195,11 @@ async def classify(
             input_mode=input_mode,
             use_retrieval=False,
             needs_summarization=size in ("long", "huge"),
-        )
+        ))
 
     # huge unclassified text — document path
     if size == "huge":
-        return RouteDecision(
+        return _decide(RouteDecision(
             route_family="preprocessed_text",
             text_type="document",
             pipeline="document_analysis",
@@ -201,14 +208,14 @@ async def classify(
             use_retrieval=False,
             needs_summarization=True,
             needs_long_processing=True,
-        )
+        ))
 
     # direct chat (short/medium/long plain text)
-    return RouteDecision(
+    return _decide(RouteDecision(
         route_family="direct_chat",
         text_type="chat",
         pipeline="direct_chat",
         size_class=size,
         input_mode=input_mode,
         use_retrieval=True,
-    )
+    ))

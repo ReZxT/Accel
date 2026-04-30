@@ -1,15 +1,19 @@
 import asyncio
+import logging
 import os
 import re
 import time
 import uuid
 import httpx
 from config import config
+from circuit_breaker import breakers
 from memory.sources import search_sources
 from memory.notes import search_notes as _search_notes
 from memory.facts import get_client, search_facts as _search_facts, search_procedures as _search_procedures
 from memory.episodes import search_episodes as _search_episodes
 from memory.extraction import _upsert_items
+
+log = logging.getLogger(__name__)
 
 SEARXNG_URL = "http://localhost:8888"
 PLAYWRIGHT_URL = "http://localhost:9300"
@@ -19,6 +23,9 @@ MAX_HTML = 50_000
 
 async def search_web(query: str, num_results: int = 8) -> str:
     """Search the web via SearXNG (aggregates Bing, DuckDuckGo, Brave, Google)."""
+    cb = breakers["searxng"]
+    if not cb.can_execute():
+        return "Web search unavailable (SearXNG circuit open — too many recent failures)."
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(
@@ -28,7 +35,9 @@ async def search_web(query: str, num_results: int = 8) -> str:
             )
             r.raise_for_status()
             data = r.json()
+        cb.record_success()
     except Exception as e:
+        cb.record_failure()
         return f"Search failed: {e}"
 
     results = data.get("results", [])[:num_results]
@@ -86,16 +95,24 @@ async def screenshot_url(url: str, full_page: bool = False) -> dict:
     except Exception as e:
         return {"__type": "error", "text": f"URL unreachable: {e} — check the address and try again."}
 
+    # Playwright runs inside Docker — rewrite localhost so it resolves to the host machine
+    playwright_url = url.replace("://localhost", "://host.docker.internal") \
+                        .replace("://127.0.0.1", "://host.docker.internal")
+    cb = breakers["playwright"]
+    if not cb.can_execute():
+        return {"__type": "error", "text": "Screenshot unavailable (Playwright circuit open — too many recent failures)."}
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 f"{PLAYWRIGHT_URL}/screenshot",
-                json={"url": url, "full_page": full_page},
+                json={"url": playwright_url, "full_page": full_page},
                 timeout=45,
             )
             r.raise_for_status()
             data = r.json()
+        cb.record_success()
     except Exception as e:
+        cb.record_failure()
         return {"__type": "error", "text": f"Screenshot failed: {e}"}
 
     b64 = data.get("image_base64", "")

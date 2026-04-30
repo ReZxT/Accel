@@ -1,5 +1,8 @@
 import json
+import logging
 from tools.llm import curator_complete
+
+log = logging.getLogger(__name__)
 
 PERSONALITIES = ["Teacher", "Coder", "Philosopher", "Casual", "Critic", "Mentor"]
 THINKING_DEPTHS = ["none", "light", "medium", "deep"]
@@ -50,8 +53,10 @@ async def run_preflight(
             personality = current_personality
         if depth not in THINKING_DEPTHS:
             depth = "light"
+        log.info("preflight: personality=%s  depth=%s", personality, depth)
         return {"personality": personality, "thinking_depth": depth}
     except Exception:
+        log.warning("preflight failed — using defaults: %s/light", current_personality)
         return {"personality": current_personality, "thinking_depth": "light"}
 
 

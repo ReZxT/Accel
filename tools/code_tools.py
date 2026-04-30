@@ -8,6 +8,13 @@ from datetime import datetime
 from pathlib import Path
 
 from config import config
+from tools.canvas_tools import canvas_draw, canvas_clear, canvas_get_state
+from tools.navidrome_tools import (
+    navidrome_search, navidrome_get_playlists, navidrome_get_playlist,
+    navidrome_create_playlist, navidrome_update_playlist, navidrome_delete_playlist,
+    player_control, player_now_playing, player_load,
+    soundcloud_get_playlists, soundcloud_get_playlist,
+)
 
 WORKSPACE_ROOT = os.getenv("WORKSPACE_ROOT", str(Path.home()))
 MAX_OUTPUT = 10_000  # chars
@@ -276,6 +283,94 @@ async def ingest_note(path: str, title: str = "") -> str:
     return f"Ingest note error: {data.get('error', 'unknown')}"
 
 
+MUSIC_DIR = "/mnt/WD/Music"
+SC_COOKIES = "/home/rezxt/bootstrap/cookies/soundcloud.com_cookies.txt"
+
+
+async def search_music(query: str, source: str = "youtube", limit: int = 5) -> str:
+    """Search YouTube or SoundCloud for music without downloading. Returns titles, duration, uploader, and URLs."""
+    import json
+    prefix = {"youtube": "ytsearch", "soundcloud": "scsearch"}.get(source, "ytsearch")
+    search_url = f"{prefix}{limit}:{query}"
+    cmd = ["yt-dlp", "--flat-playlist", "-j", "--no-warnings"]
+    if source == "soundcloud" and os.path.exists(SC_COOKIES):
+        cmd += ["--cookies", SC_COOKIES]
+    cmd.append(search_url)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+    except asyncio.TimeoutError:
+        return "Search timed out."
+    except Exception as e:
+        return f"Search failed: {e}"
+
+    results = []
+    for line in stdout.decode().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        title = item.get("title", "Unknown")
+        uploader = item.get("uploader") or item.get("channel") or "Unknown"
+        duration = item.get("duration")
+        url = item.get("webpage_url") or item.get("url") or item.get("id", "")
+        if url and not url.startswith("http"):
+            url = "https://www.youtube.com/watch?v=" + url
+        dur_str = f"{int(duration)//60}:{int(duration)%60:02d}" if duration else "?"
+        results.append(f"{len(results)+1}. **{title}** — {uploader} [{dur_str}]\n   {url}")
+
+    if not results:
+        return "No results found."
+    return "\n\n".join(results)
+
+
+async def download_music(url: str, output_dir: str = MUSIC_DIR, audio_format: str = "opus") -> str:
+    """Download audio from a YouTube/SoundCloud URL (or playlist) to the music folder in opus format."""
+    os.makedirs(output_dir, exist_ok=True)
+    output_template = os.path.join(output_dir, "%(artist)s - %(title)s.%(ext)s")
+    cmd = [
+        "yt-dlp",
+        "--extract-audio",
+        "--audio-format", audio_format,
+        "--audio-quality", "0",
+        "--embed-metadata",
+        "--embed-thumbnail",
+        "--no-warnings",
+        "--output", output_template,
+    ]
+    if "soundcloud.com" in url and os.path.exists(SC_COOKIES):
+        cmd += ["--cookies", SC_COOKIES]
+    cmd.append(url)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=300)
+        output = stdout.decode(errors="replace")
+    except asyncio.TimeoutError:
+        return "Download timed out (>5 minutes)."
+    except Exception as e:
+        return f"Download failed: {e}"
+
+    if proc.returncode != 0:
+        tail = "\n".join(output.splitlines()[-10:])
+        return f"yt-dlp exited with code {proc.returncode}:\n{tail}"
+
+    downloaded = [l for l in output.splitlines() if "[ExtractAudio]" in l or "Destination:" in l]
+    if downloaded:
+        return "Downloaded:\n" + "\n".join(downloaded)
+    return f"Download complete. Files saved to {output_dir}."
+
+
 async def add_torrent(magnet: str) -> str:
     """Open a magnet link in the system torrent client via xdg-open."""
     if not magnet.startswith("magnet:"):
@@ -372,8 +467,10 @@ from tools.web_tools import search_web, fetch_url, screenshot_url, search_knowle
 from tools.calculator import calculate
 from tools.calendar_tools import calendar_add_event, calendar_get_events, calendar_delete_event, calendar_today
 from tools.converter import convert_units, convert_currency
+from tools.tool_descriptions import get_tool_description
 
 TOOL_REGISTRY = {
+    "get_tool_description": get_tool_description,
     "read_file": read_file,
     "write_file": write_file,
     "edit_file": edit_file,
@@ -399,7 +496,23 @@ TOOL_REGISTRY = {
     "delete_file": delete_file,
     "get_file_info": get_file_info,
     "move_file": move_file,
+    "search_music": search_music,
+    "download_music": download_music,
     "add_torrent": add_torrent,
+    "navidrome_search": navidrome_search,
+    "navidrome_get_playlists": navidrome_get_playlists,
+    "navidrome_get_playlist": navidrome_get_playlist,
+    "navidrome_create_playlist": navidrome_create_playlist,
+    "navidrome_update_playlist": navidrome_update_playlist,
+    "navidrome_delete_playlist": navidrome_delete_playlist,
+    "player_control": player_control,
+    "player_now_playing": player_now_playing,
+    "player_load": player_load,
+    "canvas_draw": canvas_draw,
+    "canvas_clear": canvas_clear,
+    "canvas_get_state": canvas_get_state,
+    "soundcloud_get_playlists": soundcloud_get_playlists,
+    "soundcloud_get_playlist": soundcloud_get_playlist,
     "ingest_file": ingest_file,
     "delete_source": delete_source,
     "delete_note": delete_note,
@@ -413,17 +526,30 @@ TOOL_REGISTRY = {
 }
 
 # irreversible by default — user can override in tool_settings
-IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file", "delete_file", "move_file", "ingest_file", "ingest_note", "add_torrent", "calendar_add_event", "calendar_delete_event", "delete_source", "delete_note", "delete_memory"}
+IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file", "delete_file", "move_file", "ingest_file", "ingest_note", "add_torrent", "download_music", "calendar_add_event", "calendar_delete_event", "delete_source", "delete_note", "delete_memory", "navidrome_create_playlist", "navidrome_update_playlist", "navidrome_delete_playlist"}
 
 
-async def execute_tool(name: str, args: dict) -> str | dict:
+_session_tools_used: dict[str, set[str]] = {}
+
+async def execute_tool(name: str, args: dict, session_id: str = "default") -> str | dict:
     """Execute a tool. Returns str for text results, dict for image results."""
     fn = TOOL_REGISTRY.get(name)
     if not fn:
         return f"Unknown tool: {name}"
+
+    seen = _session_tools_used.setdefault(session_id, set())
+    first_use = name not in seen and name != "get_tool_description"
+    seen.add(name)
+
     try:
-        return await fn(**args)
+        result = await fn(**args)
+        if first_use:
+            desc = await get_tool_description(name)
+            if isinstance(result, str):
+                result = f"[First use — spec for reference]\n{desc}\n\nResult:\n{result}"
+        return result
     except TypeError as e:
-        return f"Invalid arguments for {name}: {e} (got: {list(args.keys())})"
+        desc = await get_tool_description(name)
+        return f"Wrong arguments for {name}: {e}\n\nCorrect usage:\n{desc}"
     except Exception as e:
         return f"Tool error ({name}): {e}"

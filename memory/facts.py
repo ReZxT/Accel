@@ -1,8 +1,16 @@
+import logging
 import time
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue, ScoredPoint
+from qdrant_client.models import (
+    Filter, FieldCondition, MatchValue, ScoredPoint,
+    SparseVector, Prefetch, FusionQuery, Fusion,
+)
 from tools.llm import embed
+from memory.sparse import sparse_vector
 from config import config
+from circuit_breaker import breakers
+
+log = logging.getLogger(__name__)
 
 _client: AsyncQdrantClient | None = None
 
@@ -15,27 +23,64 @@ def get_client() -> AsyncQdrantClient:
 
 
 async def search_facts(query: str, top_k: int = 10, threshold: float = 0.55) -> list[dict]:
-    vector = await embed(query)
-    results = await get_client().query_points(
-        collection_name="facts",
-        query=vector,
-        limit=top_k * 2,
-        score_threshold=threshold,
-        with_payload=True,
-    )
-    return _rerank_by_recency(results.points, top_k)
+    cb = breakers["qdrant"]
+    if not cb.can_execute():
+        log.warning("Qdrant circuit open — skipping fact retrieval")
+        return []
+    try:
+        results = await _hybrid_search("facts", query, top_k, threshold)
+        cb.record_success()
+        return _rerank_by_recency(results, top_k)
+    except Exception as e:
+        cb.record_failure()
+        log.warning("search_facts failed: %s", e)
+        return []
 
 
 async def search_procedures(query: str, top_k: int = 8, threshold: float = 0.6) -> list[dict]:
-    vector = await embed(query)
+    cb = breakers["qdrant"]
+    if not cb.can_execute():
+        return []
+    try:
+        results = await _hybrid_search("procedures", query, top_k, threshold)
+        cb.record_success()
+        return _rerank_by_recency(results, top_k)
+    except Exception as e:
+        cb.record_failure()
+        log.warning("search_procedures failed: %s", e)
+        return []
+
+
+async def _hybrid_search(
+    collection: str, query: str, top_k: int, threshold: float
+) -> list[ScoredPoint]:
+    """Run dense + sparse hybrid search with RRF fusion."""
+    dense_vec = await embed(query)
+    sp_idx, sp_vals = sparse_vector(query)
+
+    prefetch = [
+        Prefetch(
+            query=dense_vec,
+            using="dense",
+            limit=top_k * 3,
+            score_threshold=threshold,
+        ),
+    ]
+    if sp_idx:
+        prefetch.append(Prefetch(
+            query=SparseVector(indices=sp_idx, values=sp_vals),
+            using="sparse",
+            limit=top_k * 3,
+        ))
+
     results = await get_client().query_points(
-        collection_name="procedures",
-        query=vector,
+        collection_name=collection,
+        prefetch=prefetch,
+        query=FusionQuery(fusion=Fusion.RRF),
         limit=top_k * 2,
-        score_threshold=threshold,
         with_payload=True,
     )
-    return _rerank_by_recency(results.points, top_k)
+    return results.points
 
 
 def _rerank_by_recency(results: list[ScoredPoint], top_k: int) -> list[dict]:

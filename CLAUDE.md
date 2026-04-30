@@ -9,6 +9,7 @@ A local-first personal operating system for Intelligence Amplification — not a
 ### System layers:
 - **Second brain** — memory and reasoning (all 6 layers active) ✓
 - **Agentic hands** — tool execution, approval gate (active in bootstrap) ✓
+- **Voice interface** — wake word → STT → chat → TTS pipeline (active, "Hey Jarvis") ✓
 - **Initiative layer** — task queue, deferred delivery, proactive orchestration (planned)
 - **Sensory/motor extensions** — phone, Klipper, home automation, clipboard, screen context (planned)
 - **Identity coherence** — consistent personality + cognitive profile across all domains (evolving)
@@ -30,11 +31,13 @@ A local-first personal operating system for Intelligence Amplification — not a
 | llama.cpp chat | 8080 | GPU (ngl=99), 65K ctx, started via `start_chat_dimoe.sh` |
 | llama.cpp embeddings | 8081 | Docker (llama-cpu-local), bge-m3-q8_0, 8192 ctx |
 | llama.cpp curator | 8082 | Docker (llama-cpu-local), Qwen INSTRUCT, 8192 ctx |
+| llama.cpp embeddings (GPU) | 8083 | On-demand, spun up/down by `api/embeddings.py`; bge-m3, GPU |
 | code-splitter | 9200 | FastAPI — tree-sitter splitting, log/text/chat, image preprocess, session/profile/ingest |
 | Forgejo | 3000 | Self-hosted git |
 | MinIO | 9000/9001 | Object storage |
 | Prometheus | 9090 | Scrapes node-exporter (9100), Qdrant, rocm-exporter (9101 host) |
 | Grafana | 3001 | Metrics — admin/admin |
+| Navidrome | 4533 | Local music server (Subsonic API) |
 | Portainer | 9003 | Docker management |
 
 `rocm_exporter.py` runs as systemd service `rocm-exporter` on the host.
@@ -52,7 +55,12 @@ All models at `/mnt/WD/Models/`.
 - **Embeddings:** `bge-m3-q8_0.gguf` — CPU, 1024-dim (locked in; swapping requires re-embedding all collections)
 - **Curator:** `Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED.Q6_K.gguf` — CPU, INSTRUCT variant, thinking suppressed
 
-**Also on disk:** DeepSeek-R1-Distill-Qwen-14B-Q5_K_M, GLM-4.1V-9B-Thinking-Q6_K, GLM-4.6V-Flash-Q8_0, Qwen3.5-9B-Q6_K (clean base), Qwen3.5-9B INSTRUCT Q6_K, Qwen3-14B-abliterated Q5_K_M, gemma-4-E4B Q8_0, Step3-VL-10B Q6_K, gemma-3-12b-vl-polaris Q6_K, Phi-4-mini variants, XTTS-v2 (TTS, not integrated)
+**Voice models (active):**
+- **STT:** faster-whisper `base` — CPU, int8, bilingual (Polish + English auto-detect), 16kHz
+- **TTS:** Piper `en_US-lessac-medium.onnx` — offline, plays via sounddevice
+- **Wake word:** openWakeWord `hey_jarvis_v0.1.onnx` — 80ms chunks, 0.5 threshold, built-in Silero VAD
+
+**Also on disk:** DeepSeek-R1-Distill-Qwen-14B-Q5_K_M, GLM-4.1V-9B-Thinking-Q6_K, GLM-4.6V-Flash-Q8_0, Qwen3.5-9B-Q6_K (clean base), Qwen3.5-9B INSTRUCT Q6_K, Qwen3-14B-abliterated Q5_K_M, gemma-4-E4B Q8_0, Step3-VL-10B Q6_K, gemma-3-12b-vl-polaris Q6_K, Phi-4-mini variants, XTTS-v2 (TTS, superseded by Piper)
 
 ## Bootstrap — Active Pipeline
 
@@ -61,30 +69,39 @@ All models at `/mnt/WD/Models/`.
 **Structure:**
 ```
 bootstrap/
-├── api/            # /chat (SSE), /approve, /settings/tools
+├── api/            # /chat (SSE), /approve, /settings/tools, /voice, /embeddings
 ├── agents/         # chat_agent.py, preprocessed_agent.py
-├── tools/          # 19 tools
-├── memory/         # Qdrant clients: facts, episodes, sessions, sources, profile, extraction
+├── tools/          # ~37 tools
+├── memory/         # Qdrant clients: facts, episodes, sessions, sources, notes, profile, extraction
 ├── curator/        # preflight.py — personality + thinking depth
+├── voice/          # pipeline.py, stt.py, tts.py, listener.py, filter.py, models/
 ├── config.py
 └── main.py         # uvicorn, port 8100
 ```
 
-**27 tools:** `read_file`, `write_file`, `edit_file`, `delete_file`, `get_file_info`, `move_file`, `bash`, `search_files`, `list_dir`, `search_web`, `fetch_url`, `screenshot_url`, `calculate`, `calendar_today/get/add/delete`, `convert_units`, `convert_currency`, `search_knowledge_base`, `list_knowledge_base`, `search_notes`, `list_notes`, `ingest_note`, `ingest_file`, `search_audiobooks`, `add_torrent`
+**~50 tools:**
+- *File:* `read_file`, `write_file`, `edit_file`, `delete_file`, `get_file_info`, `move_file`, `download_file`
+- *System:* `bash`, `search_files`, `list_dir`
+- *Web:* `search_web`, `fetch_url`, `screenshot_url`
+- *Compute:* `calculate`, `convert_units`, `convert_currency`
+- *Calendar:* `calendar_today`, `calendar_get_events`, `calendar_add_event`, `calendar_delete_event`
+- *Memory/KB:* `search_knowledge_base`, `list_knowledge_base`, `search_notes`, `list_notes`, `ingest_note`, `ingest_file`, `delete_source`, `delete_note`, `search_facts`, `search_procedures`, `search_episodes`, `save_memory`, `update_memory`, `delete_memory`
+- *Music:* `search_music`, `download_music`, `navidrome_search`, `navidrome_get_playlists`, `navidrome_get_playlist`, `navidrome_create_playlist`, `navidrome_update_playlist`, `navidrome_delete_playlist`, `player_control`, `player_now_playing`, `player_load`, `soundcloud_get_playlists`, `soundcloud_get_playlist`
+- *Media:* `search_audiobooks`, `add_torrent`
 
-**Irreversible (require approval):** `bash`, `write_file`, `edit_file`, `delete_file`, `move_file`, `ingest_file`, `ingest_note`, `add_torrent`, `calendar_add_event`, `calendar_delete_event`
+**Irreversible (require approval):** `bash`, `write_file`, `edit_file`, `delete_file`, `move_file`, `ingest_file`, `ingest_note`, `add_torrent`, `download_music`, `navidrome_create_playlist`, `navidrome_update_playlist`, `navidrome_delete_playlist`, `calendar_add_event`, `calendar_delete_event`, `delete_source`, `delete_note`, `save_memory`, `update_memory`, `delete_memory`
 
 **Tool approval flow:** agentic loop yields `approval_request` SSE event → UI shows inline approve/deny. Each tool has `irreversible` flag; policy overridable per-tool in settings UI.
 
 ## Memory Architecture
 
-**Qdrant collections (all active):** `facts`, `episodes`, `sessions`, `sources`, `procedures` — plus `insights` and `memory_changelog` planned (Memory Consolidation).
+**Qdrant collections (all active):** `facts`, `episodes`, `sessions`, `sources`, `notes`, `procedures` — plus `insights` and `memory_changelog` planned (Memory Consolidation).
 
 **Layers:**
 - **L0** Working memory → `sessions` (full history, persists across restarts)
 - **L1** Episodic memory → `episodes` (curator-compressed; threshold 50 turns, keep 20)
 - **L2** Semantic memory → `facts` (extracted facts, content-hash dedup)
-- **L3** Knowledge base → `sources` (documents, Obsidian vault)
+- **L3** Knowledge base → `sources` (documents) + `notes` (Obsidian vault, separate collection)
 - **L4** Procedural memory → `procedures` (interaction patterns; Procedure Extractor runs post-response)
 - **L5** User profile → `user_profile.json` (always injected; `context_state`: work/study/free)
 
@@ -98,6 +115,31 @@ bootstrap/
 
 **Ingest:** POST `/ingest` on code-splitter (PDF/EPUB/TXT/MD/RST) → MinIO + Qdrant `sources`. Semantic chunking: GPU model inserts `<<<CHUNK>>>` markers; falls back to heuristic. Per-file timing logged to `~/ai-stack/logs/ingest.log`.
 
+## Canvas (Architecture Session)
+
+tldraw v2.4.0 embedded in a split-pane view (50/50 with chat). Only visible on the "architecture" session.
+
+- **JS:** loaded via esm.sh importmap (`tldraw@2.4.0`, React 18.3.1)
+- **CSS:** pinned to `unpkg.com/tldraw@2.4.0/tldraw.css` — must match JS version or toolbar breaks
+- **State:** persisted to `/canvas/state` (JSON snapshot, debounced 1s saves)
+- **Backend:** `api/canvas.py` (GET/POST state), `tools/canvas_tools.py` (canvas_draw, canvas_clear, canvas_get_state)
+- **Commands:** SSE `canvas_command` events → `window._canvasCommand()` (create_shapes, clear)
+- **Viewport bounds fix:** `syncBounds()` in the module script gets the `Box` class from `editor.getViewportScreenBounds().constructor` and calls `editor.updateViewportScreenBounds()` with a fresh Box from the container's `getBoundingClientRect()`. This is needed after `loadSnapshot()` (which resets internal state) and on panel show/hide. tldraw's internal resize handler caches the last rect and skips updates when the container size hasn't changed, so dispatching `window.resize` alone doesn't work — the direct `updateViewportScreenBounds()` call bypasses the cache.
+- **Container:** `#canvasRoot` uses `position: absolute; inset: 0` inside `.canvas-panel` (`position: relative; width: 50%`)
+
+## Music Pipeline (Music Session)
+
+Navidrome (Subsonic API) + Feishin desktop player + in-browser player, with SoundCloud/YouTube search+download.
+
+- **Navidrome:** local music server at port 4533, accessed via Subsonic API (`/rest/` endpoints). Creds from env: `NAVIDROME_URL`, `NAVIDROME_USER`, `NAVIDROME_PASSWORD`
+- **Feishin:** desktop player controlled via MPRIS/playerctl (`player_control`, `player_now_playing`)
+- **In-browser player:** `player_load` sends song IDs → UI fetches streams from `/navidrome/rest/stream` (proxied via nginx to avoid CORS)
+- **Now Playing widget:** bottom bar in music session, polls `/music/now_playing` every 3s, shows art/title/artist/progress/controls
+- **SoundCloud:** `soundcloud_get_playlists`, `soundcloud_get_playlist` — reads via cookie auth (`cookies/soundcloud_cookies.json`)
+- **YouTube/SoundCloud search+download:** `search_music` (yt-dlp search), `download_music` (downloads opus to `/mnt/WD/Music`, requires approval)
+- **API:** `api/music.py` — `/music/now_playing` (GET), `/music/control` (POST) — wraps playerctl
+- **Tools:** `tools/navidrome_tools.py` — 13 tools for search, playlists, playback, SoundCloud
+
 ## Architecture — What's Still Planned
 
 Design authority: `notes/` (Obsidian vault). Read when context is needed — they represent intent, code may lag behind.
@@ -108,6 +150,7 @@ Design authority: `notes/` (Obsidian vault). Read when context is needed — the
 - **Memory consolidation** — background dedup + synthesis → `insights` collection; user approves before changes apply; design in `notes/Memory_Consolidation.md`
 - **Sandboxed code execution** — `bash` is currently unsandboxed; sandbox boundary TBD
 - **Note writing to Obsidian vault** — tool to write back to `notes/`
+- **Voice improvements** — Polish STT (fine-tuned Whisper), Polish TTS voice, wake-word tuning
 
 ## How to Work With This Project
 
@@ -122,6 +165,19 @@ Design authority: `notes/` (Obsidian vault). Read when context is needed — the
 **Browser conversations may not be in context.** User brainstorms in Claude.ai, important outcomes go into Obsidian notes. When told to read the notes, do it.
 
 **User speaks English and Polish.** Match the language they write in.
+
+## Voice Pipeline
+
+`voice/` — wake word → STT → chat → TTS, runs as background thread.
+
+- **Wake word:** "Hey Jarvis" via openWakeWord (80ms chunks, Silero VAD built-in)
+- **STT:** faster-whisper `base`, CPU int8, auto language detection (Polish + English)
+- **TTS:** Piper `en_US-lessac-medium.onnx` → WAV → sounddevice playback
+- **API:** `POST /voice/toggle?enabled=true/false`, `GET /voice/status`
+- **Voice mode flag** (`voice_mode: true`) injects system addendum: concise spoken sentences, no markdown
+- Tool status spoken mid-turn ("Let me search for that...", etc.) via `voice/filter.py`
+- Response filtered before TTS: strips `<think>` blocks, markdown, code blocks, URLs
+- Piper binary: `voice/models/piper/piper/piper`; model: `voice/models/piper/en_US-lessac-medium.onnx`
 
 ## llama.cpp Build
 

@@ -1,5 +1,9 @@
+import logging
 import httpx
 from config import config
+from circuit_breaker import breakers
+
+log = logging.getLogger(__name__)
 
 _profile_cache: dict | None = None
 
@@ -17,15 +21,21 @@ async def get_profile(force_refresh: bool = False) -> dict:
     global _profile_cache
     if _profile_cache and not force_refresh:
         return _profile_cache
+    cb = breakers["splitter"]
+    if not cb.can_execute():
+        return _profile_cache or {}
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(f"{config.code_splitter_url}/profile")
             if r.status_code == 200:
                 _profile_cache = r.json()
+                cb.record_success()
                 return _profile_cache
-    except Exception:
-        pass
-    return {}
+        cb.record_success()
+    except Exception as e:
+        cb.record_failure()
+        log.warning("get_profile failed: %s", e)
+    return _profile_cache or {}
 
 
 async def get_tool_settings() -> dict:
@@ -38,8 +48,13 @@ async def save_tool_settings(settings: dict) -> None:
     profile = await get_profile()
     profile["tool_settings"] = settings
     _profile_cache = profile
+    cb = breakers["splitter"]
+    if not cb.can_execute():
+        return
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             await client.put(f"{config.code_splitter_url}/profile", json=profile)
-    except Exception:
-        pass
+        cb.record_success()
+    except Exception as e:
+        cb.record_failure()
+        log.warning("save_tool_settings failed: %s", e)

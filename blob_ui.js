@@ -6,6 +6,7 @@ const SESSION_ICONS = {
   coding:       `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>`,
   architecture: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>`,
   study:        `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>`,
+  music:        `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`,
 };
 
 const SESSIONS = [
@@ -13,6 +14,7 @@ const SESSIONS = [
   { id: 'coding',       label: 'Coding',        },
   { id: 'architecture', label: 'Architecture',  },
   { id: 'study',        label: 'Study',         },
+  { id: 'music',        label: 'Music',         },
 ];
 
 // ===================== STATE =====================
@@ -25,13 +27,337 @@ const state = {
 let pendingImages = []; // Array of { base64, name, size, file }
 let pendingFiles = [];  // Array of { content, name, size, language }
 
+// ===================== SLASH COMMANDS =====================
+const COMMANDS = {
+  cancel: {
+    description: 'Cancel current generation',
+    handler() {
+      if (!state.isLoading) {
+        renderSystemMessage('Nothing to cancel.');
+        return;
+      }
+      state.cancelled = true;
+      if (state.activeController) {
+        state.activeController.abort();
+      }
+      fetch(`${window.location.origin}/cancel?session_id=${encodeURIComponent(getSessionId())}`, { method: 'POST' });
+    },
+  },
+  retry: {
+    description: 'Re-run the last turn',
+    handler() {
+      if (state.isLoading) { renderSystemMessage('Wait for current response to finish.'); return; }
+      const lastUserIdx = state.chatHistory.findLastIndex(m => m.role === 'user');
+      if (lastUserIdx === -1) { renderSystemMessage('Nothing to retry.'); return; }
+      const lastUser = state.chatHistory[lastUserIdx];
+      state.chatHistory = state.chatHistory.slice(0, lastUserIdx);
+      // remove last user + bot messages from DOM
+      const container = document.getElementById('chatContainer');
+      const allMsgs = container.querySelectorAll('.message');
+      // walk backwards, remove last bot and last user
+      let removedBot = false, removedUser = false;
+      for (let i = allMsgs.length - 1; i >= 0 && (!removedBot || !removedUser); i--) {
+        const el = allMsgs[i];
+        if (!removedBot && el.classList.contains('bot')) { el.remove(); removedBot = true; }
+        else if (!removedUser && el.classList.contains('user')) { el.remove(); removedUser = true; }
+      }
+      document.getElementById('messageInput').value = lastUser.content;
+      sendMessage();
+    },
+  },
+  btw: {
+    description: 'Append to last message: /btw <text>',
+    handler(args) {
+      const extra = args.join(' ').trim();
+      if (!extra) { renderSystemMessage('Usage: /btw <text to append>'); return; }
+      const lastUserIdx = state.chatHistory.findLastIndex(m => m.role === 'user');
+      if (lastUserIdx === -1) { renderSystemMessage('No message to edit.'); return; }
+      state.chatHistory[lastUserIdx].content += '\n' + extra;
+      localStorage.setItem(`accel_chat_${state.currentSession}`, JSON.stringify(state.chatHistory));
+      // update DOM
+      const container = document.getElementById('chatContainer');
+      const userMsgs = container.querySelectorAll('.message.user');
+      const lastEl = userMsgs[userMsgs.length - 1];
+      if (lastEl) {
+        const contentEl = lastEl.querySelector('.message-content');
+        if (contentEl) contentEl.innerHTML = formatContent(state.chatHistory[lastUserIdx].content);
+        lastEl.dataset.rawContent = state.chatHistory[lastUserIdx].content;
+      }
+      renderSystemMessage(`Appended to last message. /retry to re-send.`);
+    },
+  },
+  clear: {
+    description: 'Clear chat display (keeps session memory)',
+    handler() {
+      document.getElementById('chatContainer').innerHTML = '';
+      state.chatHistory = [];
+      renderSystemMessage('Chat cleared. Session memory preserved.');
+    },
+  },
+  status: {
+    description: 'Check service health',
+    async handler() {
+      renderSystemMessage('Checking services...');
+      const services = [
+        { name: 'Bootstrap', url: '/health' },
+        { name: 'Chat model', url: 'http://localhost:8080/health' },
+        { name: 'Embeddings', url: 'http://localhost:8081/health' },
+        { name: 'Curator', url: 'http://localhost:8082/health' },
+        { name: 'Qdrant', url: 'http://localhost:6333/healthz' },
+      ];
+      const [healthResults, cbRes] = await Promise.all([
+        Promise.allSettled(
+          services.map(s => fetch(s.url, { signal: AbortSignal.timeout(3000) }).then(r => r.ok))
+        ),
+        fetch('/status/circuits', { signal: AbortSignal.timeout(3000) }).then(r => r.json()).catch(() => null),
+      ]);
+      const lines = services.map((s, i) => {
+        const ok = healthResults[i].status === 'fulfilled' && healthResults[i].value;
+        return `${ok ? '+' : '-'} ${s.name}`;
+      });
+      if (cbRes && Array.isArray(cbRes)) {
+        const tripped = cbRes.filter(c => c.state !== 'closed');
+        lines.push('');
+        if (tripped.length === 0) {
+          lines.push('Circuit breakers: all closed');
+        } else {
+          lines.push('Circuit breakers:');
+          for (const c of tripped) {
+            lines.push(`  ! ${c.name}: ${c.state} (${c.failures} failures)`);
+          }
+        }
+      }
+      renderSystemMessage(lines.join('\n'));
+    },
+  },
+  voice: {
+    description: 'Toggle voice: /voice on|off',
+    async handler(args) {
+      const enabled = args[0] === 'on';
+      await fetch(`${window.location.origin}/voice/toggle?enabled=${enabled}`, { method: 'POST' });
+      renderSystemMessage(`Voice ${enabled ? 'enabled' : 'disabled'}.`);
+    },
+  },
+  help: {
+    description: 'List available commands',
+    handler() {
+      const lines = Object.entries(COMMANDS).map(([name, cmd]) => `/${name} — ${cmd.description}`);
+      renderSystemMessage(lines.join('\n'));
+    },
+  },
+};
+
+function parseCommand(text) {
+  if (!text.startsWith('/')) return null;
+  const parts = text.slice(1).split(/\s+/);
+  const name = parts[0].toLowerCase();
+  const args = parts.slice(1);
+  if (!COMMANDS[name]) return null;
+  return { name, args };
+}
+
+function renderSystemMessage(text) {
+  const msgs = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'message system';
+  div.innerHTML = `
+    <div class="message-avatar">sys</div>
+    <div class="message-body">
+      <div class="message-content">${text}</div>
+    </div>`;
+  msgs.appendChild(div);
+  scrollToBottom();
+}
+
 // ===================== INIT =====================
 const UI_VERSION = '202604221915';
 let _pollNow = false;
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') _pollNow = true; });
 
+// ===================== NOW PLAYING WIDGET =====================
+let _npTimer = null;
+let _npProgressTimer = null;
+let _npState = null;
+
+// In-browser player state
+let _ibQueue = [];     // [{id, title, artist, album, duration, stream_url, art_url}]
+let _ibIndex = 0;
+let _ibAudio = null;
+
+function getAudio() {
+  if (!_ibAudio) {
+    _ibAudio = document.getElementById('npAudio');
+    if (!_ibAudio) return null;
+    _ibAudio.addEventListener('ended', () => ibNext());
+    _ibAudio.addEventListener('timeupdate', () => {
+      if (_ibQueue.length) {
+        _npState = ibState();
+        updateProgressBar();
+      }
+    });
+    _ibAudio.addEventListener('play', () => { if (_ibQueue.length) renderNowPlaying(); });
+    _ibAudio.addEventListener('pause', () => { if (_ibQueue.length) renderNowPlaying(); });
+  }
+  return _ibAudio;
+}
+
+function ibState() {
+  const a = getAudio();
+  const t = _ibQueue[_ibIndex] || {};
+  return {
+    source: 'browser',
+    status: a && !a.paused ? 'playing' : 'paused',
+    title: t.title || '',
+    artist: t.artist || '',
+    album: t.album || '',
+    length: t.duration || 0,
+    position: a ? a.currentTime : 0,
+    art_url: t.art_url || '',
+  };
+}
+
+function loadBrowserQueue(tracks, index = 0) {
+  _ibQueue = tracks;
+  _ibIndex = index;
+  const a = getAudio();
+  if (!a || !tracks.length) return;
+  a.src = tracks[index].stream_url;
+  a.play().catch(() => {});
+  _npState = ibState();
+  renderNowPlaying();
+}
+
+function ibNext() {
+  if (_ibIndex < _ibQueue.length - 1) {
+    loadBrowserQueue(_ibQueue, _ibIndex + 1);
+  } else {
+    _ibQueue = [];
+    _npState = null;
+    renderNowPlaying();
+  }
+}
+
+function ibPrev() {
+  const a = getAudio();
+  if (a && a.currentTime > 3) { a.currentTime = 0; return; }
+  if (_ibIndex > 0) loadBrowserQueue(_ibQueue, _ibIndex - 1);
+}
+
+// Handle play_queue SSE event from model
+function handlePlayQueue(tracks) {
+  if (!tracks || !tracks.length) return;
+  loadBrowserQueue(tracks, 0);
+  if (state.currentSession !== 'music') {
+    showToast('Playing in Music session', 'success', 2500);
+  }
+}
+
+async function fetchNowPlaying() {
+  // In-browser player takes priority
+  if (_ibQueue.length) {
+    _npState = ibState();
+    renderNowPlaying();
+    return;
+  }
+  try {
+    const r = await fetch('/music/now_playing', { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) return;
+    const data = await r.json();
+    data.source = 'feishin';
+    _npState = data;
+    renderNowPlaying();
+  } catch (_) {}
+}
+
+function fmtDur(s) {
+  s = Math.floor(s || 0);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function updateProgressBar() {
+  const bar = document.getElementById('npProgressBar');
+  const pos = document.getElementById('npPosition');
+  if (!bar || !_npState) return;
+  const pct = _npState.length > 0 ? (_npState.position / _npState.length) * 100 : 0;
+  bar.style.width = pct + '%';
+  if (pos) pos.textContent = fmtDur(_npState.position);
+}
+
+function renderNowPlaying() {
+  const widget = document.getElementById('nowPlayingWidget');
+  if (!widget) return;
+  const np = _npState;
+  if (!np || np.status === 'stopped' || !np.title) {
+    widget.style.display = 'none';
+    return;
+  }
+  widget.style.display = 'flex';
+
+  const art = document.getElementById('npArt');
+  const title = document.getElementById('npTitle');
+  const artist = document.getElementById('npArtist');
+  const playBtn = document.getElementById('npPlayBtn');
+  const dur = document.getElementById('npDuration');
+
+  if (art) { art.src = np.art_url || ''; art.style.display = np.art_url ? 'block' : 'none'; }
+  if (title) title.textContent = np.title;
+  if (artist) artist.textContent = np.artist || '';
+  if (dur) dur.textContent = fmtDur(np.length);
+  if (playBtn) playBtn.innerHTML = np.status === 'playing'
+    ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`
+    : `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>`;
+  updateProgressBar();
+}
+
+async function playerAction(action, value = 0) {
+  if (_ibQueue.length) {
+    // Control in-browser player
+    const a = getAudio();
+    if (!a) return;
+    if (action === 'play_pause') { a.paused ? a.play() : a.pause(); }
+    else if (action === 'next') ibNext();
+    else if (action === 'previous') ibPrev();
+    else if (action === 'seek') a.currentTime = value;
+    else if (action === 'volume') a.volume = Math.max(0, Math.min(1, value));
+    _npState = ibState();
+    renderNowPlaying();
+  } else {
+    // Control Feishin
+    try {
+      await fetch(`/music/control?action=${action}&value=${value}`, { method: 'POST' });
+      setTimeout(fetchNowPlaying, 300);
+    } catch (_) {}
+  }
+}
+
+function seekFromClick(e) {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  if (_npState && _npState.length > 0) {
+    playerAction('seek', Math.floor(pct * _npState.length));
+  }
+}
+
+function startNowPlayingPolling() {
+  if (_npTimer) clearInterval(_npTimer);
+  fetchNowPlaying();
+  _npTimer = setInterval(fetchNowPlaying, 5000);
+}
+
+function stopNowPlayingPolling() {
+  if (_npTimer) { clearInterval(_npTimer); _npTimer = null; }
+  const widget = document.getElementById('nowPlayingWidget');
+  if (widget && !_ibQueue.length) widget.style.display = 'none';
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   debugLog(`UI version: ${UI_VERSION}`, 'info');
+  // Hash routing: #architecture, #music, #standard, etc.
+  const hash = window.location.hash.slice(1);
+  if (hash && SESSIONS.some(s => s.id === hash)) {
+    state.currentSession = hash;
+    localStorage.setItem('accel_active_session', hash);
+  }
   loadSettings();
   setupTextarea();
   setupImageInput();
@@ -40,6 +366,9 @@ document.addEventListener('DOMContentLoaded', () => {
   createImageViewer();
   setupFileDrop();
   initVoiceStatus();
+  if (state.currentSession === 'music') startNowPlayingPolling();
+  if (state.currentSession === 'architecture') setCanvas(true);
+  updateCanvasBtn();
 });
 
 function loadSettings() {
@@ -84,6 +413,21 @@ const TOOL_LABELS = {
   download_file:        { label: 'download_file',        desc: 'Download file from URL',            irreversible: true },
   add_torrent:          { label: 'add_torrent',          desc: 'Send magnet link to torrent client',irreversible: true },
   search_audiobooks:    { label: 'search_audiobooks',    desc: 'Search AudioBookBay',               irreversible: false },
+  search_music:             { label: 'search_music',             desc: 'Search YouTube/SoundCloud',              irreversible: false },
+  download_music:           { label: 'download_music',           desc: 'Download audio to /mnt/WD/Music',        irreversible: true },
+  navidrome_search:         { label: 'navidrome_search',         desc: 'Search local music library',             irreversible: false },
+  navidrome_get_playlists:  { label: 'navidrome_get_playlists',  desc: 'List Navidrome playlists',               irreversible: false },
+  navidrome_get_playlist:   { label: 'navidrome_get_playlist',   desc: 'Get tracks in a playlist',               irreversible: false },
+  navidrome_create_playlist:{ label: 'navidrome_create_playlist',desc: 'Create a Navidrome playlist',            irreversible: true },
+  navidrome_update_playlist:{ label: 'navidrome_update_playlist',desc: 'Add/remove tracks from playlist',        irreversible: true },
+  navidrome_delete_playlist:{ label: 'navidrome_delete_playlist',desc: 'Delete a Navidrome playlist',            irreversible: true },
+  player_control:           { label: 'player_control',           desc: 'Control Feishin playback',               irreversible: false },
+  player_now_playing:       { label: 'player_now_playing',       desc: 'Get current track in Feishin',           irreversible: false },
+  player_load:              { label: 'player_load',              desc: 'Load songs into in-browser player',      irreversible: false },
+  canvas_draw:              { label: 'canvas_draw',              desc: 'Draw shapes on the canvas',             irreversible: false },
+  canvas_clear:             { label: 'canvas_clear',             desc: 'Clear the canvas',                      irreversible: false },
+  soundcloud_get_playlists: { label: 'soundcloud_get_playlists', desc: 'List SoundCloud playlists',              irreversible: false },
+  soundcloud_get_playlist:  { label: 'soundcloud_get_playlist',  desc: 'Get tracks in a SoundCloud playlist',   irreversible: false },
 };
 
 let _toolSettings = {};
@@ -135,6 +479,23 @@ async function loadSessionHistory() {
   const sendBtn = document.getElementById('sendBtn');
   sendBtn.disabled = true;
   const sid = state.currentSession;
+  const container = document.getElementById('chatContainer');
+
+  function renderAll(messages) {
+    // clear everything except welcome (which gets hidden below)
+    const welcome = document.getElementById('welcomeMessage');
+    container.innerHTML = '';
+    if (welcome) container.appendChild(welcome);
+
+    if (messages.length > 0) {
+      document.getElementById('welcomeMessage').style.display = 'none';
+      messages.forEach((msg) =>
+        renderMessage(msg.role, msg.content, msg.timestamp, false, msg.images || [], msg.files || [], msg.thoughts || '')
+      );
+      scrollToBottom();
+    }
+  }
+
   try {
     const resp = await fetch(`${getSplitterBase()}/session?session_id=${sid}&t=${Date.now()}`, { signal: AbortSignal.timeout(8000) });
     if (resp.ok) {
@@ -143,11 +504,7 @@ async function loadSessionHistory() {
       if (messages.length > 0) {
         state.chatHistory = messages;
         localStorage.setItem(`accel_chat_${sid}`, JSON.stringify(messages));
-        document.getElementById('welcomeMessage').style.display = 'none';
-        messages.forEach((msg) =>
-          renderMessage(msg.role, msg.content, msg.timestamp, false, msg.images || [], msg.files || [], msg.thoughts || '')
-        );
-        scrollToBottom();
+        renderAll(messages);
         startSessionPolling();
         sendBtn.disabled = false;
         return;
@@ -159,15 +516,11 @@ async function loadSessionHistory() {
   const chatSaved = localStorage.getItem(`accel_chat_${sid}`);
   if (chatSaved) {
     try {
-      state.chatHistory = JSON.parse(chatSaved);
-      if (state.chatHistory.length > 0) {
-        document.getElementById('welcomeMessage').style.display = 'none';
-        state.chatHistory.forEach((msg) =>
-          renderMessage(msg.role, msg.content, msg.timestamp, false, msg.images || [], msg.files || [], msg.thoughts || '')
-        );
-        scrollToBottom();
-        // Upload localStorage-only history to server so other devices can see it
-        saveSessionToServer(sid, state.chatHistory);
+      const messages = JSON.parse(chatSaved);
+      state.chatHistory = messages;
+      renderAll(messages);
+      if (messages.length > 0) {
+        saveSessionToServer(sid, messages);
       }
     } catch (_) {}
   }
@@ -264,6 +617,30 @@ async function pollSession() {
 
 
 // ===================== UI HELPERS =====================
+let _canvasOpen = false;
+
+function updateCanvasBtn() {
+  const btn = document.getElementById('canvasToggleBtn');
+  if (!btn) return;
+  btn.style.display = state.currentSession === 'architecture' ? 'flex' : 'none';
+  btn.style.opacity = _canvasOpen ? '1' : '0.5';
+}
+
+function setCanvas(open) {
+  _canvasOpen = open;
+  const panel = document.getElementById('canvasPanel');
+  const area  = document.getElementById('contentArea');
+  const layout = document.getElementById('appLayout');
+  if (!panel || !area) return;
+  panel.style.display = open ? 'flex' : 'none';
+  area.classList.toggle('canvas-open', open);
+  if (layout) layout.classList.toggle('canvas-open', open);
+  if (open && window._mountTldraw) window._mountTldraw();
+  updateCanvasBtn();
+}
+
+function toggleCanvas() { setCanvas(!_canvasOpen); }
+
 function toggleSettings() {
   const open = document.getElementById('settingsPanel').classList.toggle('open');
   if (!open) document.getElementById('knowledgePanel').classList.remove('open');
@@ -501,6 +878,12 @@ function setupTextarea() {
       e.preventDefault();
       sendMessage();
     }
+  });
+
+  // send button — use pointerdown so it fires even when disabled
+  document.getElementById('sendBtn').addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    sendMessage();
   });
 }
 
@@ -1176,7 +1559,23 @@ async function sendMessage() {
   const hasImages = pendingImages.length > 0;
   const hasFiles = pendingFiles.length > 0;
 
-  if ((!text && !hasImages && !hasFiles) || state.isLoading) return;
+  // slash commands work even while loading
+  const cmd = text ? parseCommand(text) : null;
+  if (cmd) {
+    input.value = '';
+    input.style.height = 'auto';
+    document.getElementById('charCount').textContent = '0 chars';
+    COMMANDS[cmd.name].handler(cmd.args);
+    return;
+  }
+
+  // button click during loading = cancel
+  if (state.isLoading) {
+    COMMANDS.cancel.handler();
+    return;
+  }
+
+  if (!text && !hasImages && !hasFiles) return;
 
   input.value = '';
   input.style.height = 'auto';
@@ -1191,7 +1590,10 @@ async function sendMessage() {
   scrollToBottom();
 
   state.isLoading = true;
-  document.getElementById('sendBtn').disabled = true;
+  state.cancelled = false;
+  const sendBtn = document.getElementById('sendBtn');
+  sendBtn.classList.add('cancel-mode');
+  sendBtn.title = 'Cancel (/cancel)';
   updateStatus('waiting');
   showTypingIndicator();
 
@@ -1221,10 +1623,15 @@ async function sendMessage() {
 
   debugLog(`Sending to: ${WEBHOOK_URL}`, 'info');
 
+  let accText = '';
+  let accThinking = '';
+  let msgEl = null;
+
   try {
     const headers = { 'Content-Type': 'application/json' };
 
     const controller = new AbortController();
+    state.activeController = controller;
     const timeoutId = setTimeout(() => controller.abort(), 120000);
 
     const response = await fetch(WEBHOOK_URL, {
@@ -1247,9 +1654,7 @@ async function sendMessage() {
     }
 
     // --- SSE streaming ---
-    let accText = '';
-    let accThinking = '';
-    const msgEl = createStreamingMessage();
+    msgEl = createStreamingMessage();
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -1288,6 +1693,10 @@ async function sendMessage() {
                 b.textContent = `❌ ${chunk.tool} denied`;
                 area.appendChild(b);
               }
+            } else if (chunk.type === 'canvas_command') {
+              if (window._canvasCommand) window._canvasCommand(chunk.command, chunk.data || {});
+            } else if (chunk.type === 'play_queue') {
+              handlePlayQueue(chunk.tracks);
             } else if (chunk.type === 'error') {
               // Save whatever we have so pollSession doesn't see a mismatch and wipe the DOM
               const saveOnError = accText.trim().length > 0;
@@ -1310,16 +1719,29 @@ async function sendMessage() {
   } catch (error) {
     removeTypingIndicator();
     if (error.name === 'AbortError') {
-      renderError('Request timed out (2 min).');
+      if (state.cancelled) {
+        if (msgEl) {
+          const savePartial = accText.trim().length > 0;
+          finalizeStreamingMessage(msgEl, accText || '(cancelled)', accThinking, savePartial);
+        }
+        updateStatus('connected');
+      } else {
+        renderError('Request timed out (2 min).');
+        updateStatus('error');
+      }
     } else if (error.message.includes('Failed to fetch')) {
-      renderError('Cannot connect to n8n.\n\n• Is n8n running?\n• CORS: N8N_CORS_ORIGIN=* n8n start');
+      renderError('Cannot connect to bootstrap.\n\n• Is bootstrap running?');
+      updateStatus('error');
     } else {
       renderError(error.message);
+      updateStatus('error');
     }
-    updateStatus('error');
   } finally {
     state.isLoading = false;
-    document.getElementById('sendBtn').disabled = false;
+    state.activeController = null;
+    const sendBtn = document.getElementById('sendBtn');
+    sendBtn.classList.remove('cancel-mode');
+    sendBtn.title = 'Send Message';
     scrollToBottom();
   }
 }
@@ -1385,6 +1807,10 @@ async function switchSession(id) {
 
   state.currentSession = id;
   localStorage.setItem('accel_active_session', id);
+  history.replaceState(null, '', `#${id}`);
+  if (id === 'music') startNowPlayingPolling(); else stopNowPlayingPolling();
+  if (id === 'architecture') setCanvas(true); else setCanvas(false);
+  updateCanvasBtn();
 
   // Clear display
   state.chatHistory = [];
