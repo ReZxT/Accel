@@ -11,8 +11,10 @@ router = APIRouter(prefix="/music", tags=["music"])
 DBUS = "unix:path=/run/user/1000/bus"
 PLAYER = "Feishin"
 
-ND_BASE = "http://localhost:4533/rest"
-ND_AUTH = {"u": "ReZxT", "p": "Itakdalej5", "v": "1.16.1", "c": "accel", "f": "json"}
+ND_BASE = os.getenv("NAVIDROME_URL", "http://localhost:4533/rest")
+ND_USER = os.getenv("NAVIDROME_USER", "")
+ND_PASS = os.getenv("NAVIDROME_PASSWORD", "")
+ND_AUTH = {"u": ND_USER, "p": ND_PASS, "v": "1.16.1", "c": "accel", "f": "json"}
 
 
 async def _playerctl(*args: str) -> str:

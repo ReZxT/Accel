@@ -7,8 +7,10 @@ import string
 import httpx
 from circuit_breaker import breakers
 
-ND_BASE = "http://localhost:4533/rest"
-ND_AUTH = {"u": "ReZxT", "p": "Itakdalej5", "v": "1.16.1", "c": "accel", "f": "json"}
+ND_BASE = os.getenv("NAVIDROME_URL", "http://localhost:4533/rest")
+ND_USER = os.getenv("NAVIDROME_USER", "")
+ND_PASS = os.getenv("NAVIDROME_PASSWORD", "")
+ND_AUTH = {"u": ND_USER, "p": ND_PASS, "v": "1.16.1", "c": "accel", "f": "json"}
 DBUS = "unix:path=/run/user/1000/bus"
 PLAYER = "Feishin"
 
@@ -209,8 +211,8 @@ async def player_load(song_ids: list[str]) -> dict:
                 "artist": song.get("artist", "") or song.get("albumArtist", ""),
                 "album": song.get("album", ""),
                 "duration": song.get("duration", 0),
-                "stream_url": f"/navidrome/rest/stream?id={sid}&u=ReZxT&p=Itakdalej5&v=1.16.1&c=accel&format=opus",
-                "art_url": f"/navidrome/rest/getCoverArt?id={sid}&u=ReZxT&p=Itakdalej5&v=1.16.1&c=accel&size=300",
+                "stream_url": f"/navidrome/rest/stream?id={sid}&u={ND_USER}&p={ND_PASS}&v=1.16.1&c=accel&format=opus",
+                "art_url": f"/navidrome/rest/getCoverArt?id={sid}&u={ND_USER}&p={ND_PASS}&v=1.16.1&c=accel&size=300",
             })
         except Exception:
             continue
