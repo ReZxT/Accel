@@ -11,4 +11,8 @@ data/*.db
 logs/
 cookies/
 canvas_state.json
+canvas_snapshot.png
 *.mp3
+outdated/
+voice/models/
+docs/.obsidian/
