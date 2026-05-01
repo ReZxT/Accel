@@ -53,6 +53,34 @@ Built as a custom Python-native stack using **FastAPI + a custom agentic loop**.
 
 ---
 
+## Desktop App (Electron)
+
+React + Vite + Electron 41 + Tailwind CSS 4. Built as AppImage on Linux.
+
+- **Sessions:** persistent multi-session chat with session switching, each backed by Qdrant
+- **Split panels:** chat + right panel (canvas, files, music, notes, images) — sessions like "architecture" auto-show the canvas panel
+- **Canvas:** tldraw v2.4.0 embedded whiteboard — model can draw shapes via tool calls, canvas state persisted to backend, screenshot tool lets model read the canvas via vision
+- **Music:** Navidrome/Subsonic in-browser player with Now Playing widget, playlist management, SoundCloud/YouTube search+download
+- **Service dashboard:** start/stop/restart for all stack services (Docker, systemd, native processes) with health status, ports, and log viewer
+- **Approval flow:** irreversible tool calls show inline approve/deny prompt — keyboard navigable (arrow keys + Enter)
+- **Settings:** tool policy overrides, context state toggle, theme, Open DevTools
+- **Notes browser:** Obsidian vault search and viewing
+- **Build:** `npm run build:electron` → `release/Accel-0.0.0.AppImage`
+
+### Tech Stack
+
+| Layer | Tech |
+|---|---|
+| Framework | React 19, TypeScript 6 |
+| Build | Vite 8, electron-builder |
+| Styling | Tailwind CSS 4 |
+| State | Zustand |
+| Canvas | tldraw 2.4.0 |
+| Markdown | marked + DOMPurify |
+| Desktop | Electron 41 |
+
+---
+
 ## Memory Layers
 
 | Layer | Store | Description |
@@ -99,7 +127,7 @@ The agentic loop executes tools with an **approval gate** — irreversible actio
 | Memory/KB | `search_knowledge_base`, `list_knowledge_base`, `search_notes`, `list_notes`, `ingest_note`, `ingest_file`, `delete_source`, `delete_note`, `search_facts`, `search_procedures`, `search_episodes`, `save_memory`, `update_memory`, `delete_memory` |
 | Music | `search_music`, `download_music`, `navidrome_search`, `navidrome_get_playlists`, `navidrome_get_playlist`, `navidrome_create_playlist`, `navidrome_update_playlist`, `navidrome_delete_playlist`, `player_control`, `player_now_playing`, `player_load`, `soundcloud_get_playlists`, `soundcloud_get_playlist` |
 | Media | `search_audiobooks`, `add_torrent` |
-| Canvas | `canvas_draw`, `canvas_clear`, `canvas_get_state` |
+| Canvas | `canvas_draw`, `canvas_clear`, `canvas_get_state`, `canvas_screenshot` |
 
 Idempotent guards on create operations (calendar events, playlists) prevent duplicates from agentic retries.
 
@@ -114,6 +142,25 @@ Wake word → STT → chat → TTS, runs as a background thread.
 - **TTS:** Piper `en_US-lessac-medium`, offline WAV → sounddevice playback
 - **Voice mode:** injects system addendum for concise spoken responses, strips markdown/code/URLs before TTS
 - Tool status spoken mid-turn ("Let me search for that...")
+
+---
+
+## Inference Stack
+
+Three models run simultaneously on a single RX 6700 XT (12 GB VRAM):
+
+| Model | Role | VRAM | Speed |
+|---|---|---|---|
+| Qwen3.5-9B Q6_K | Chat + vision | ~9.5 GB | 40 t/s |
+| Qwen3.5-0.8B Q8_0 | Curator (preflight + episode compression) | ~0.8 GB | 163 t/s |
+| bge-m3 Q8_0 | Embeddings (1024-dim) | CPU | — |
+| **Total** | | **~10.5 GB** | |
+
+**TurboQuant+ KV cache:** Chat model uses a [llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant) fork with `-ctk turbo4 -ctv turbo4` — compresses KV cache from ~2 GB (f16) to 544 MB at 65K context with only +0.96% perplexity impact. This frees the VRAM headroom needed to fit the curator and vision projector alongside the chat model.
+
+**Vision:** mmproj projector loaded with the chat model — image inputs are preprocessed to 1280px max and passed through the vision encoder.
+
+**Curator:** 0.8B model handles personality routing and episode compression at 163 t/s on GPU. Preflight drops from 14s (old 9B CPU curator) to 0.2s. Uses raw `/completion` endpoint with `<think>\n</think>\n` injection to bypass broken `thinking_budget_tokens` on this model class.
 
 ---
 
@@ -136,18 +183,21 @@ All inference and storage runs locally. No cloud APIs.
 | Service | Port | Role |
 |---|---|---|
 | Bootstrap API | 8100 | FastAPI, custom agentic loop |
-| nginx | 80 | Serves web UI, proxies API + Navidrome |
-| llama.cpp chat | 8080 | GPU inference (ROCm), 65K context |
+| nginx | 80 | Serves Electron/React build, proxies API + Navidrome |
+| llama.cpp chat | 8080 | GPU (TurboQuant+, turbo4 KV, mmproj), 65K context |
 | llama.cpp embeddings | 8081 | CPU (Docker), bge-m3 1024-dim |
-| llama.cpp curator | 8082 | CPU (Docker), personality/extraction |
-| llama.cpp embeddings (GPU) | 8083 | On-demand, spun up/down dynamically |
+| llama.cpp curator | 8082 | GPU (native), Qwen3.5-0.8B, 8K context |
 | code-splitter | 9200 | AST chunking, log splitting, image preprocess, ingest |
+| SearXNG | 8888 | Web search backend |
+| Playwright | 9300 | Headless browser / screenshot |
+| MCP Server | 9400 | Tool MCP bridge |
 | Qdrant | 6333 | Vector database (6 collections, hybrid search) |
 | MinIO | 9000 | Object storage |
 | Navidrome | 4533 | Local music server (Subsonic API) |
 | Forgejo | 3000 | Self-hosted git |
 | Prometheus | 9090 | Metrics scraping |
 | Grafana | 3001 | Dashboards |
+| Portainer | 9003 | Docker management |
 
 ---
 
@@ -157,7 +207,7 @@ All inference and storage runs locally. No cloud APIs.
 bootstrap/
 ├── api/
 │   ├── chat.py              # /chat SSE endpoint, tier0 + router dispatch
-│   ├── canvas.py            # Canvas state persistence
+│   ├── canvas.py            # Canvas state + PNG snapshot persistence
 │   ├── music.py             # Now playing, player control
 │   └── voice.py             # Voice toggle, status
 ├── agents/
@@ -183,7 +233,7 @@ bootstrap/
 │   ├── code_tools.py        # read/write/edit/delete/move files, bash, search
 │   ├── calendar_tools.py    # SQLite calendar with Polish holidays
 │   ├── navidrome_tools.py   # 13 Navidrome/music tools
-│   ├── canvas_tools.py      # Canvas draw/clear/state
+│   ├── canvas_tools.py      # Canvas draw/clear/state/screenshot
 │   └── tool_descriptions.py # Tool registry with irreversibility flags
 ├── voice/
 │   ├── pipeline.py          # Wake word → STT → chat → TTS orchestration
@@ -191,13 +241,29 @@ bootstrap/
 │   ├── tts.py               # Piper TTS wrapper
 │   ├── listener.py          # Audio capture + wake word detection
 │   └── filter.py            # Response cleaning for speech output
+├── ui/                      # Electron + React desktop app
+│   ├── electron/
+│   │   ├── main.ts          # Electron main process, proxy server, IPC
+│   │   ├── preload.ts       # Context bridge (IPC, window management)
+│   │   ├── services.ts      # Service management (Docker, systemd, native)
+│   │   ├── ipc-handlers.ts  # IPC handler registration
+│   │   └── types.ts         # Electron-side type definitions
+│   └── src/
+│       ├── components/
+│       │   ├── chat/        # InputBar, MessageItem, MessageStream, ApprovalBlock
+│       │   ├── layout/      # AppShell, LeftNav, RightPanel, TitleBar
+│       │   ├── panels/      # Canvas, Files, Music, Notes, ImagePreview
+│       │   ├── services/    # ServiceDashboard, ServiceGroupCard, LogsModal
+│       │   ├── sessions/    # SessionList, SessionButton
+│       │   └── overlays/    # SettingsDialog
+│       ├── stores/          # Zustand state (chat, sessions, settings)
+│       └── api/             # Backend + Electron API clients
+├── docs/
+│   └── llama_benchmarks.md  # Speed, quality, VRAM benchmarks across quants
 ├── circuit_breaker.py       # Per-domain circuit breakers (8 services)
 ├── logging_config.py        # Centralized daily-rotating log setup
 ├── config.py                # Single config object, env vars
 ├── nginx.conf
-├── blob_ui.js               # Web UI (vanilla JS, React migration planned)
-├── blob_ui.css
-├── index.html
 └── main.py                  # uvicorn entry point
 ```
 
@@ -234,6 +300,12 @@ Start curator:
 ```bash
 llama-server -m /mnt/WD/Models/Qwen3.5-0.8B-Q8_0.gguf \
   -c 8192 --host 0.0.0.0 --port 8082 -ngl 99 --jinja
+```
+
+Build desktop app:
+```bash
+cd ui && npm install && npm run build:electron
+ELECTRON_DISABLE_SANDBOX=1 ./release/Accel-0.0.0.AppImage --no-sandbox
 ```
 
 ---
