@@ -10,7 +10,7 @@ interface Props {
 
 export default function ToolResultBlock({ tool, output, image, mime_type }: Props) {
   const [open, setOpen] = useState(false)
-  const openPanel = useUIStore((s) => s.openPanel)
+  const openPanelMode = useUIStore((s) => s.openPanelMode)
 
   if (image) {
     const src = `data:${mime_type || 'image/png'};base64,${image}`
@@ -24,7 +24,7 @@ export default function ToolResultBlock({ tool, output, image, mime_type }: Prop
           src={src}
           alt="Screenshot"
           className="max-w-full rounded-sm mx-3 mb-2 border border-border cursor-pointer hover:opacity-90 transition-opacity"
-          onClick={() => openPanel('image', src)}
+          onClick={() => openPanelMode('file', { content: src })}
         />
       </div>
     )

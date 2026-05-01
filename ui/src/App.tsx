@@ -11,21 +11,11 @@ import { useUIStore } from './stores/uiStore'
 export default function App() {
   const activeSession = useSessionStore((s) => s.activeSession)
   const loadHistory = useChatStore((s) => s.loadHistory)
-  const openPanel = useUIStore((s) => s.openPanel)
-  const closePanel = useUIStore((s) => s.closePanel)
   const activeView = useUIStore((s) => s.activeView)
 
   useEffect(() => {
     loadHistory(activeSession)
-
-    if (activeSession === 'architecture') {
-      openPanel('canvas')
-    } else if (activeSession === 'music') {
-      openPanel('music')
-    } else {
-      closePanel()
-    }
-  }, [activeSession, loadHistory, openPanel, closePanel])
+  }, [activeSession, loadHistory])
 
   useEffect(() => {
     const hash = window.location.hash.slice(1)

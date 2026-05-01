@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback } from 'react'
 import LeftNav from './LeftNav'
 import RightPanel from './RightPanel'
 import TitleBar from './TitleBar'
@@ -18,18 +18,9 @@ interface Props {
 }
 
 export default function AppShell({ children }: Props) {
-  const closePanel = useUIStore((s) => s.closePanel)
   const addPendingAttachments = useUIStore((s) => s.addPendingAttachments)
   const [dragging, setDragging] = useState(false)
   const dragCounter = useRef(0)
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closePanel()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [closePanel])
 
   const processFiles = useCallback(async (fileList: FileList) => {
     const imgs: MessageImage[] = []
