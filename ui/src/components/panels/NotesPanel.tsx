@@ -98,13 +98,18 @@ export default function NotesPanel({ path: initialPath }: Props) {
   const save = useCallback(async () => {
     if (!selectedPath || !dirty) return
     setSaving(true)
-    await fetch('/notes/file', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: selectedPath, content }),
-    })
-    setSaving(false)
-    setDirty(false)
+    try {
+      const res = await fetch('/notes/file', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: selectedPath, content }),
+      })
+      if (res.ok) setDirty(false)
+    } catch {
+      // leave dirty=true so user can retry
+    } finally {
+      setSaving(false)
+    }
   }, [selectedPath, content, dirty])
 
   const handleEdit = (val: string) => {
