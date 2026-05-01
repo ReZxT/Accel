@@ -17,6 +17,7 @@ export interface ServiceDef {
   dependsOn: string[]
   autoStart: boolean
   group: ServiceGroupId
+  accelerator?: 'gpu' | 'cpu'
 }
 
 export interface ServiceStatus {
@@ -26,6 +27,7 @@ export interface ServiceStatus {
   health: ServiceHealth
   pid?: number
   uptime?: number
+  accelerator?: 'gpu' | 'cpu'
 }
 
 export interface AccelConfig {

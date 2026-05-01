@@ -133,4 +133,5 @@ export interface ServiceStatus {
   health: ServiceHealth
   pid?: number
   uptime?: number
+  accelerator?: 'gpu' | 'cpu'
 }
