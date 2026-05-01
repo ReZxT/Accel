@@ -18,7 +18,7 @@ export default function LeftNav() {
       {/* Collapse toggle */}
       <button
         onClick={toggleLeftNav}
-        className="flex items-center justify-center h-12 text-text-tertiary hover:text-text-primary transition-colors"
+        className="flex items-center justify-center h-12 text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
         title={collapsed ? 'Expand' : 'Collapse'}
       >
         <svg
