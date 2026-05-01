@@ -121,3 +121,16 @@ export interface StreamingApproval {
   resolved?: boolean
   approved?: boolean
 }
+
+export type ServiceRuntime = 'process' | 'docker' | 'systemd'
+export type ServiceHealth = 'healthy' | 'unhealthy' | 'stopped' | 'starting'
+export type ServiceGroupId = 'inference' | 'core' | 'memory' | 'monitoring' | 'media' | 'dev'
+
+export interface ServiceStatus {
+  id: string
+  name: string
+  group: ServiceGroupId
+  health: ServiceHealth
+  pid?: number
+  uptime?: number
+}
