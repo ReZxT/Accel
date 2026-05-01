@@ -1,4 +1,4 @@
-import { spawn, ChildProcess, execSync } from 'child_process'
+import { spawn, ChildProcess } from 'child_process'
 import { ServiceDef, ServiceStatus, ServiceHealth, ServiceGroupId } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -243,10 +243,10 @@ export class ServiceManager {
           this.startProcess(def)
           break
         case 'docker':
-          this.startDocker(def)
+          await this.startDocker(def)
           break
         case 'systemd':
-          this.startSystemd(def)
+          await this.startSystemd(def)
           break
       }
       this.startHealthCheck(def)
@@ -270,10 +270,10 @@ export class ServiceManager {
           this.stopProcess(id)
           break
         case 'docker':
-          this.stopDocker(def)
+          await this.stopDocker(def)
           break
         case 'systemd':
-          this.stopSystemd(def)
+          await this.stopSystemd(def)
           break
       }
       this.updateHealth(id, 'stopped')
@@ -341,24 +341,33 @@ export class ServiceManager {
     }
   }
 
-  private startDocker(def: ServiceDef): void {
+  private spawnDetached(cmd: string, args: string[]): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(cmd, args, { stdio: 'ignore', detached: true })
+      child.unref()
+      child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))))
+      child.on('error', reject)
+    })
+  }
+
+  private startDocker(def: ServiceDef): Promise<void> {
     const file = def.composeFile || '/home/rezxt/bootstrap/docker-compose.yml'
-    execSync(`docker compose -f "${file}" up -d ${def.compose}`, { timeout: 30000 })
+    return this.spawnDetached('docker', ['compose', '-f', file, 'up', '-d', def.compose!])
   }
 
-  private stopDocker(def: ServiceDef): void {
+  private stopDocker(def: ServiceDef): Promise<void> {
     const file = def.composeFile || '/home/rezxt/bootstrap/docker-compose.yml'
-    execSync(`docker compose -f "${file}" stop ${def.compose}`, { timeout: 30000 })
+    return this.spawnDetached('docker', ['compose', '-f', file, 'stop', def.compose!])
   }
 
-  private startSystemd(def: ServiceDef): void {
-    if (!def.unit) throw new Error(`No systemd unit configured for ${def.id}`)
-    execSync(`systemctl --user start ${def.unit}`, { timeout: 10000 })
+  private startSystemd(def: ServiceDef): Promise<void> {
+    if (!def.unit) return Promise.reject(new Error(`No systemd unit configured for ${def.id}`))
+    return this.spawnDetached('systemctl', ['--user', 'start', def.unit])
   }
 
-  private stopSystemd(def: ServiceDef): void {
-    if (!def.unit) throw new Error(`No systemd unit configured for ${def.id}`)
-    execSync(`systemctl --user stop ${def.unit}`, { timeout: 10000 })
+  private stopSystemd(def: ServiceDef): Promise<void> {
+    if (!def.unit) return Promise.reject(new Error(`No systemd unit configured for ${def.id}`))
+    return this.spawnDetached('systemctl', ['--user', 'stop', def.unit])
   }
 
   private startHealthCheck(def: ServiceDef): void {
