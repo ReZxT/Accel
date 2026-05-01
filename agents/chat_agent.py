@@ -293,6 +293,15 @@ async def _run_agentic_loop(
                 tool_result_parts.append(
                     f"<tool_result>\n<function={tool_name}>\n{summary}\n</function>\n</tool_result>"
                 )
+            elif isinstance(result, dict) and result.get("__type") == "open_panel":
+                mode = result.get("mode", "file")
+                payload = result.get("payload", {})
+                summary = result.get("summary", f"Opening {mode} panel.")
+                yield json.dumps({"type": "open_panel", "mode": mode, "payload": payload})
+                yield json.dumps({"type": "tool_result", "tool": tool_name, "output": summary})
+                tool_result_parts.append(
+                    f"<tool_result>\n<function={tool_name}>\n{summary}\n</function>\n</tool_result>"
+                )
             elif isinstance(result, dict) and result.get("__type") == "play_queue":
                 tracks = result.get("tracks", [])
                 summary = f"Loading {len(tracks)} track(s) into player: " + ", ".join(t.get("title", "?") for t in tracks[:3])
