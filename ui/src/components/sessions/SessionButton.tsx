@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import type { Session } from '../../types'
-import Tooltip from '../ui/Tooltip'
 
 const ICONS: Record<string, ReactNode> = {
   MessageSquare: (
@@ -52,5 +51,5 @@ export default function SessionButton({ session, active, collapsed, onClick }: P
     </button>
   )
 
-  return collapsed ? <Tooltip text={session.label}>{button}</Tooltip> : button
+  return button
 }

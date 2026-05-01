@@ -39,9 +39,11 @@ export default function LeftNav() {
       </Tooltip>
 
       {/* Sessions */}
-      <div className="flex-1 overflow-y-auto px-2">
-        <SessionList collapsed={collapsed} />
-      </div>
+      {!collapsed && (
+        <div className="flex-1 overflow-y-auto px-2">
+          <SessionList collapsed={collapsed} />
+        </div>
+      )}
 
       {/* Bottom controls */}
       <div className="flex flex-col gap-1 p-2 border-t border-border">
