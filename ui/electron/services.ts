@@ -296,9 +296,10 @@ export class ServiceManager {
     const parts = def.command.split(/\s+/)
     const child = spawn(parts[0], parts.slice(1), {
       stdio: 'ignore',
-      detached: false,
+      detached: true,  // own process group — OOM killer won't take Electron with it
       env: { ...process.env },
     })
+    child.unref()  // don't keep Electron's event loop alive waiting for child
     child.on('exit', (code) => {
       this.processes.delete(def.id)
       const intentional = !this.healthTimers.has(def.id)
