@@ -121,6 +121,8 @@ export default function InputBar() {
                 addStreamToolResult({ id: `tr_${Date.now()}`, tool: chunk.tool, output: chunk.output, image: chunk.image, mime_type: chunk.mime_type })
               } else if (chunk.type === 'approval_request') {
                 addStreamApproval({ request_id: chunk.request_id, tool: chunk.tool, args: chunk.args })
+              } else if (chunk.type === 'open_panel') {
+                useUIStore.getState().openPanelMode(chunk.mode, chunk.payload)
               }
             } catch { /* malformed chunk */ }
           }
