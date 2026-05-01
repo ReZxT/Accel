@@ -44,6 +44,10 @@ export default defineConfig({
         target: 'http://localhost:8100',
         changeOrigin: true,
       },
+      '/notes': {
+        target: 'http://localhost:8100',
+        changeOrigin: true,
+      },
       '/session': {
         target: 'http://localhost:9200',
         changeOrigin: true,
