@@ -49,7 +49,7 @@ export default function LeftNav() {
             className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors cursor-pointer ${
               activeView === 'services'
                 ? 'text-accent bg-accent-soft'
-                : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
+                : 'text-text-secondary hover:text-text-primary'
             }`}
             title="Services"
           >
@@ -64,7 +64,7 @@ export default function LeftNav() {
         )}
         <button
           onClick={() => openOverlay('settings')}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors cursor-pointer"
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
           title="Settings"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
