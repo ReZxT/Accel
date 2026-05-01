@@ -9,12 +9,14 @@ contextBridge.exposeInMainWorld('accel', {
     onStatus: (cb: (statuses: any[]) => void) => {
       ipcRenderer.on('services:status', (_event, data) => cb(data))
     },
+    logs: (id: string) => ipcRenderer.invoke('services:logs', id),
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
     toggleMaximize: () => ipcRenderer.send('window:toggleMaximize'),
     close: () => ipcRenderer.send('window:close'),
     openDevTools: () => ipcRenderer.send('window:openDevTools'),
+    onFocus: (cb: () => void) => ipcRenderer.on('window:focus', cb),
   },
   config: {
     get: (key: string) => ipcRenderer.invoke('config:get', key),

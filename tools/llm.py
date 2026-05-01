@@ -53,21 +53,31 @@ async def _stream_chat(payload: dict) -> AsyncGenerator[dict, None]:
 
 
 async def curator_complete(messages: list[dict], temperature: float = 0.1) -> str:
+    # 0.8B thinking model: inject empty <think> block via raw /completion to skip reasoning
     cb = breakers["curator"]
     if not cb.can_execute():
         return ""
+    parts = []
+    for m in messages:
+        role = m["role"]
+        content = m.get("content", "")
+        parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
+    parts.append("<|im_start|>assistant\n<think>\n</think>\n")
+    prompt = "\n".join(parts)
     payload = {
-        "model": config.curator_model,
-        "messages": messages,
-        "stream": False,
+        "prompt": prompt,
+        "max_tokens": 512,
         "temperature": temperature,
+        "stop": ["<|im_end|>"],
+        "stream": False,
     }
+    base_url = config.curator_url.removesuffix("/v1")
     try:
         async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(f"{config.curator_url}/chat/completions", json=payload)
+            r = await client.post(f"{base_url}/completion", json=payload)
             r.raise_for_status()
             cb.record_success()
-            return r.json()["choices"][0]["message"]["content"]
+            return r.json().get("content", "")
     except Exception:
         cb.record_failure()
         return ""

@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react'
-import { Tldraw, type Editor } from 'tldraw'
+import { Tldraw, exportToBlob, type Editor } from 'tldraw'
 import 'tldraw/tldraw.css'
 
 async function loadState(): Promise<object | null> {
@@ -19,6 +19,21 @@ async function saveState(snapshot: object) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(snapshot),
   })
+}
+
+async function savePng(editor: Editor) {
+  try {
+    const ids = [...editor.getCurrentPageShapeIds()]
+    if (ids.length === 0) return
+    const blob = await exportToBlob({ editor, ids, format: 'png' })
+    const buf = await blob.arrayBuffer()
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
+    await fetch('/canvas/png', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: b64 }),
+    })
+  } catch { /* non-critical */ }
 }
 
 export default function CanvasPanel() {
@@ -44,6 +59,44 @@ export default function CanvasPanel() {
       }
     })
     editor.store.listen(scheduleSave, { source: 'user', scope: 'all' })
+    editor.store.listen(() => savePng(editor), { source: 'user', scope: 'all' })
+
+    ;(window as any)._canvasCommand = (command: string, data: any) => {
+      if (command === 'tldraw:clear') {
+        editor.selectAll()
+        editor.deleteShapes(editor.getSelectedShapeIds())
+        return
+      }
+      if (command === 'tldraw:create_shapes') {
+        const shapes = (data.shapes ?? []).map((s: any) => {
+          const { type, x = 100, y = 100, ...rest } = s
+          const props: Record<string, any> = {}
+          if (type === 'geo') {
+            props.geo = rest.geo ?? 'rectangle'
+            props.w = rest.w ?? 200
+            props.h = rest.h ?? 80
+            props.text = rest.text ?? ''
+            props.color = rest.color ?? 'blue'
+            props.fill = rest.fill ?? 'none'
+            props.size = rest.size ?? 'm'
+          } else if (type === 'text') {
+            props.text = rest.text ?? ''
+            props.color = rest.color ?? 'black'
+            props.size = rest.size ?? 'm'
+          } else if (type === 'note') {
+            props.text = rest.text ?? ''
+            props.color = rest.color ?? 'yellow'
+            props.size = rest.size ?? 'm'
+          } else if (type === 'arrow') {
+            props.color = rest.color ?? 'black'
+            props.size = rest.size ?? 'm'
+          }
+          return { type, x, y, props }
+        })
+        editor.createShapes(shapes)
+        setTimeout(() => savePng(editor), 300)
+      }
+    }
   }, [scheduleSave])
 
   useEffect(() => () => {

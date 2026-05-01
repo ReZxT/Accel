@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ServiceStatus, ServiceGroupId } from '../../types'
 import { useServiceStore } from '../../stores/serviceStore'
+import LogsModal from './LogsModal'
 
 const GROUP_LABELS: Record<ServiceGroupId, string> = {
   inference: 'Inference',
@@ -20,6 +21,7 @@ const HEALTH_COLORS: Record<string, string> = {
 
 export default function ServiceGroupCard({ group, services }: { group: ServiceGroupId; services: ServiceStatus[] }) {
   const [expanded, setExpanded] = useState(false)
+  const [logsFor, setLogsFor] = useState<{ id: string; name: string } | null>(null)
   const startService = useServiceStore((s) => s.startService)
   const stopService = useServiceStore((s) => s.stopService)
   const restartService = useServiceStore((s) => s.restartService)
@@ -47,8 +49,8 @@ export default function ServiceGroupCard({ group, services }: { group: ServiceGr
         <div className="border-t border-border">
           {services.map((s) => (
             <div key={s.id} className="flex items-center justify-between px-4 py-2 border-b border-border last:border-b-0">
-              <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${HEALTH_COLORS[s.health]}`} />
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${HEALTH_COLORS[s.health]}`} />
                 <span className="text-sm">{s.name}</span>
                 <span className="text-xs text-text-tertiary">{s.health}</span>
                 {s.accelerator === 'gpu' && (
@@ -57,8 +59,18 @@ export default function ServiceGroupCard({ group, services }: { group: ServiceGr
                 {s.accelerator === 'cpu' && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-500/20 text-zinc-400 font-medium">CPU</span>
                 )}
+                {s.ports?.map((p) => (
+                  <span key={p} className="text-[10px] px-1.5 py-0.5 rounded bg-black/30 text-text-tertiary font-mono">:{p}</span>
+                ))}
               </div>
-              <div className="flex gap-1">
+              <div className="flex gap-1 flex-shrink-0">
+                <button
+                  onClick={() => setLogsFor({ id: s.id, name: s.name })}
+                  title="View logs"
+                  className="text-xs px-2 py-1 rounded bg-white/5 text-text-tertiary hover:text-text-primary hover:bg-white/10 transition-colors"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+                </button>
                 {s.health === 'stopped' || s.health === 'unhealthy' ? (
                   <button
                     onClick={() => startService(s.id)}
@@ -86,6 +98,10 @@ export default function ServiceGroupCard({ group, services }: { group: ServiceGr
             </div>
           ))}
         </div>
+      )}
+
+      {logsFor && (
+        <LogsModal serviceId={logsFor.id} serviceName={logsFor.name} onClose={() => setLogsFor(null)} />
       )}
     </div>
   )

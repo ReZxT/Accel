@@ -156,21 +156,28 @@ async def _run_agentic_loop(
         think_blocks = re.findall(r"<think>([\s\S]*?)</think>", response_text, re.IGNORECASE)
         if think_blocks:
             extra_thinking = "\n".join(think_blocks).strip()
-            if extra_thinking:
-                thinking_text += extra_thinking
-                yield json.dumps({"type": "thinking", "text": extra_thinking})
             response_text = re.sub(r"<think>[\s\S]*?</think>", "", response_text, flags=re.IGNORECASE).strip()
+        else:
+            extra_thinking = ""
 
         tool_calls = parse_xml_tool_calls(response_text)
         clean_text = strip_tool_calls(response_text) if tool_calls else response_text
 
-        # emit clean text (strips XML tool call markup)
-        if clean_text:
-            yield json.dumps({"type": "text", "text": clean_text})
+        if not clean_text and not tool_calls and extra_thinking:
+            # Model put its entire response inside <think> — emit it as the answer so it's not lost
+            thinking_text += extra_thinking
+            yield json.dumps({"type": "text", "text": extra_thinking})
+        else:
+            # Normal case: emit thinking separately, then clean text
+            if extra_thinking:
+                thinking_text += extra_thinking
+                yield json.dumps({"type": "thinking", "text": extra_thinking})
+            if clean_text:
+                yield json.dumps({"type": "text", "text": clean_text})
 
         if not tool_calls:
             # model produced no text and no tool calls — nudge once then stop
-            if not clean_text and not nudged:
+            if not clean_text and not extra_thinking and not nudged:
                 nudged = True
                 messages.append({"role": "assistant", "content": ""})
                 messages.append({"role": "user", "content": "Please provide your response."})
@@ -442,9 +449,7 @@ async def run_chat(
 
     loop_start = len(messages)  # index of first new turn added by the loop
 
-    budget_kwargs = {}
-    if budget is not None:
-        budget_kwargs["extra_body"] = {"thinking_budget_tokens": budget}
+    budget_kwargs = {"extra_body": {"thinking_budget_tokens": budget if budget is not None else 0}}
 
     # agentic loop — accumulate final response text for extraction/display
     response_text = ""

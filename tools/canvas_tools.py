@@ -109,13 +109,55 @@ async def canvas_draw(shapes=None, **kwargs) -> dict:
     return _cmd("tldraw:create_shapes", {"shapes": shapes}, summary)
 
 
+async def canvas_screenshot() -> dict:
+    """Capture the current canvas as an image. Use this to visually inspect what's drawn."""
+    import httpx, base64
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get("http://localhost:8100/canvas/png", timeout=10)
+            if r.status_code == 204:
+                return {"__type": "error", "text": "Canvas is empty — nothing to screenshot yet."}
+            r.raise_for_status()
+    except Exception as e:
+        return {"__type": "error", "text": f"Could not fetch canvas image: {e}"}
+    b64 = base64.b64encode(r.content).decode()
+    return {"__type": "image", "base64": b64, "mime_type": "image/png"}
+
+
 async def canvas_clear() -> dict:
     """Clear everything from the canvas."""
     return _cmd("tldraw:clear", {}, "Canvas cleared.")
 
 
 async def canvas_get_state() -> str:
-    """Get the current contents of the canvas as a JSON description of all shapes. Use this before drawing to understand what's already there, or to read text the user drew."""
-    # State is read by the UI and returned via the /canvas/state endpoint
-    # This tool signals the UI to fetch and return state — the SSE mechanism handles the roundtrip
-    return "Use screenshot_url('http://localhost/#architecture') to see the canvas visually. The canvas panel opens automatically for that session."
+    """Get the current contents of the canvas as a readable list of shapes. Use this before drawing to understand what's already there."""
+    import httpx, json
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get("http://localhost:8100/canvas/state", timeout=5)
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        return f"Could not read canvas state: {e}"
+
+    store = data.get("document", {}).get("store", {})
+    shapes = [v for v in store.values() if v.get("typeName") == "shape"]
+    if not shapes:
+        return "Canvas is empty."
+
+    lines = [f"{len(shapes)} shape(s) on canvas:"]
+    for s in shapes:
+        t = s.get("type", "?")
+        x, y = round(s.get("x", 0)), round(s.get("y", 0))
+        p = s.get("props", {})
+        if t == "geo":
+            lines.append(f"  geo({p.get('geo','?')}) at ({x},{y}) {round(p.get('w',0))}×{round(p.get('h',0))} color={p.get('color')} fill={p.get('fill')} text={p.get('text','')!r}")
+        elif t == "text":
+            lines.append(f"  text at ({x},{y}) size={p.get('size')} color={p.get('color')} text={p.get('text','')!r}")
+        elif t == "note":
+            lines.append(f"  note at ({x},{y}) color={p.get('color')} text={p.get('text','')!r}")
+        elif t == "arrow":
+            lines.append(f"  arrow at ({x},{y}) color={p.get('color')}")
+        else:
+            lines.append(f"  {t} at ({x},{y})")
+    return "\n".join(lines)

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -16,6 +16,17 @@ export default function InputBar() {
   const removeImage = useUIStore((s) => s.removeImage)
   const removeFile = useUIStore((s) => s.removeFile)
   const clearAttachments = useUIStore((s) => s.clearAttachments)
+
+  // Focus textarea when window regains focus so typing starts immediately
+  useEffect(() => {
+    const focus = () => textareaRef.current?.focus()
+    if (window.accel?.window?.onFocus) {
+      window.accel.window.onFocus(focus)
+    } else {
+      window.addEventListener('focus', focus)
+      return () => window.removeEventListener('focus', focus)
+    }
+  }, [])
 
   const handleFiles = useCallback(async (fileList: FileList) => {
     const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
@@ -123,6 +134,8 @@ export default function InputBar() {
                 addStreamApproval({ request_id: chunk.request_id, tool: chunk.tool, args: chunk.args })
               } else if (chunk.type === 'open_panel') {
                 useUIStore.getState().openPanelMode(chunk.mode, chunk.payload)
+              } else if (chunk.type === 'canvas_command') {
+                ;(window as any)._canvasCommand?.(chunk.command, chunk.data)
               }
             } catch { /* malformed chunk */ }
           }

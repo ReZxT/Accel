@@ -57,7 +57,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   addStreamToolResult: (tr) =>
     set((s) => ({ streamingResults: [...s.streamingResults, tr] })),
   addStreamApproval: (a) =>
-    set((s) => ({ streamingApprovals: [...s.streamingApprovals, a] })),
+    set({ streamingApprovals: [a] }),
   resolveApproval: (requestId, approved) =>
     set((s) => ({
       streamingApprovals: s.streamingApprovals.map((a) =>
@@ -77,8 +77,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }),
 
   finishStreaming: (sessionId) => {
-    const { streamingText, streamingThinking, messages } = get()
-    if (streamingText.trim()) {
+    const { streamingText, streamingThinking, streamingTools, messages } = get()
+    if (streamingText.trim() || streamingThinking || streamingTools.length > 0) {
       const botMsg: Message = {
         role: 'bot',
         content: streamingText,

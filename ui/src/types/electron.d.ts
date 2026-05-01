@@ -7,12 +7,14 @@ interface AccelAPI {
     stop: (id: string) => Promise<{ ok: boolean; error?: string }>
     restart: (id: string) => Promise<{ ok: boolean; error?: string }>
     onStatus: (cb: (statuses: ServiceStatus[]) => void) => void
+    logs: (id: string) => Promise<string>
   }
   window: {
     minimize: () => void
     toggleMaximize: () => void
     close: () => void
     openDevTools: () => void
+    onFocus: (cb: () => void) => void
   }
   config: {
     get: (key: string) => Promise<unknown>

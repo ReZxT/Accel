@@ -23,6 +23,10 @@ export function registerIpcHandlers(
     return serviceManager.restart(id)
   })
 
+  ipcMain.handle('services:logs', (_event, id: string) => {
+    return serviceManager.getLogs(id)
+  })
+
   ipcMain.handle('config:get', (_event, key: string) => {
     return configStore.get(key as any)
   })

@@ -15,8 +15,9 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     id: 'llama-chat',
     name: 'Chat Model',
     runtime: 'process',
-    command: 'llama-server -m /mnt/WD/Models/Qwen3.5-9B-Deckard-Claude-DIMOE-Uncensored-Heretic-Thinking.Q5_K_M.gguf --mmproj /mnt/WD/Models/Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED.mmproj-Q8_0.gguf -c 65536 --host 0.0.0.0 --port 8080 -ngl 99 --jinja',
+    command: 'llama-server -m /mnt/WD/Models/Qwen3.5-9B-Q6_K.gguf -c 65536 --host 0.0.0.0 --port 8080 -ngl 99 --jinja',
     healthCheck: { url: 'http://localhost:8080/health', interval: 10000 },
+    ports: [8080],
     dependsOn: [],
     autoStart: false,
     group: 'inference',
@@ -29,6 +30,7 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     compose: 'llama-chat-gpu',
     composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
     healthCheck: { url: 'http://localhost:8080/health', interval: 10000 },
+    ports: [8080],
     dependsOn: [],
     autoStart: false,
     group: 'inference',
@@ -41,6 +43,7 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     compose: 'curator',
     composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
     healthCheck: { url: 'http://localhost:8082/health', interval: 15000 },
+    ports: [8082],
     dependsOn: [],
     autoStart: false,
     group: 'inference',
@@ -53,6 +56,20 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     compose: 'embeddings',
     composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
     healthCheck: { url: 'http://localhost:8081/health', interval: 15000 },
+    ports: [8081],
+    dependsOn: [],
+    autoStart: false,
+    group: 'inference',
+    accelerator: 'cpu',
+  },
+  {
+    id: 'qwen-mini',
+    name: 'Qwen Mini',
+    runtime: 'docker',
+    compose: 'qwen-mini',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
+    healthCheck: { url: 'http://localhost:8083/health', interval: 15000 },
+    ports: [8083],
     dependsOn: [],
     autoStart: false,
     group: 'inference',
@@ -64,6 +81,7 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     runtime: 'process',
     command: '/home/rezxt/bootstrap/.venv/bin/python /home/rezxt/bootstrap/main.py',
     healthCheck: { url: 'http://localhost:8100/health', interval: 5000 },
+    ports: [8100],
     dependsOn: [],
     autoStart: false,
     group: 'core',
@@ -71,9 +89,11 @@ const DEFAULT_SERVICES: ServiceDef[] = [
   {
     id: 'code-splitter',
     name: 'Code Splitter',
-    runtime: 'process',
-    command: '',
+    runtime: 'docker',
+    compose: 'code-splitter',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
     healthCheck: { url: 'http://localhost:9200/health', interval: 10000 },
+    ports: [9200],
     dependsOn: [],
     autoStart: false,
     group: 'core',
@@ -85,6 +105,55 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     compose: 'nginx',
     composeFile: '/home/rezxt/bootstrap/docker-compose.yml',
     healthCheck: { url: 'http://localhost:80', interval: 10000 },
+    ports: [80],
+    dependsOn: [],
+    autoStart: false,
+    group: 'core',
+  },
+  {
+    id: 'n8n',
+    name: 'n8n',
+    runtime: 'docker',
+    compose: 'n8n',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
+    healthCheck: { url: 'http://localhost:5678/healthz', interval: 15000 },
+    ports: [5678],
+    dependsOn: [],
+    autoStart: false,
+    group: 'core',
+  },
+  {
+    id: 'searxng',
+    name: 'SearXNG',
+    runtime: 'docker',
+    compose: 'searxng',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
+    healthCheck: { url: 'http://localhost:8888', interval: 15000 },
+    ports: [8888],
+    dependsOn: [],
+    autoStart: false,
+    group: 'core',
+  },
+  {
+    id: 'playwright',
+    name: 'Playwright',
+    runtime: 'docker',
+    compose: 'playwright',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
+    healthCheck: { url: 'http://localhost:9300/health', interval: 15000 },
+    ports: [9300],
+    dependsOn: [],
+    autoStart: false,
+    group: 'core',
+  },
+  {
+    id: 'mcp',
+    name: 'MCP Server',
+    runtime: 'docker',
+    compose: 'mcp',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
+    healthCheck: { url: 'http://localhost:9400/health', interval: 15000 },
+    ports: [9400],
     dependsOn: [],
     autoStart: false,
     group: 'core',
@@ -94,7 +163,9 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     name: 'Qdrant',
     runtime: 'docker',
     compose: 'qdrant',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
     healthCheck: { url: 'http://localhost:6333/healthz', interval: 10000 },
+    ports: [6333, 6334],
     dependsOn: [],
     autoStart: false,
     group: 'memory',
@@ -104,7 +175,9 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     name: 'MinIO',
     runtime: 'docker',
     compose: 'minio',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
     healthCheck: { url: 'http://localhost:9000/minio/health/live', interval: 10000 },
+    ports: [9000, 9001],
     dependsOn: [],
     autoStart: false,
     group: 'memory',
@@ -114,7 +187,9 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     name: 'Prometheus',
     runtime: 'docker',
     compose: 'prometheus',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
     healthCheck: { url: 'http://localhost:9090/-/healthy', interval: 15000 },
+    ports: [9090],
     dependsOn: [],
     autoStart: false,
     group: 'monitoring',
@@ -124,7 +199,32 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     name: 'Grafana',
     runtime: 'docker',
     compose: 'grafana',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
     healthCheck: { url: 'http://localhost:3001/api/health', interval: 15000 },
+    ports: [3001],
+    dependsOn: [],
+    autoStart: false,
+    group: 'monitoring',
+  },
+  {
+    id: 'rocm-exporter',
+    name: 'ROCm Exporter',
+    runtime: 'systemd',
+    unit: 'rocm-exporter',
+    healthCheck: { url: 'http://localhost:9101/metrics', interval: 15000 },
+    ports: [9101],
+    dependsOn: [],
+    autoStart: false,
+    group: 'monitoring',
+  },
+  {
+    id: 'node-exporter',
+    name: 'Node Exporter',
+    runtime: 'docker',
+    compose: 'node-exporter',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
+    healthCheck: { url: 'http://localhost:9100/metrics', interval: 30000 },
+    ports: [9100],
     dependsOn: [],
     autoStart: false,
     group: 'monitoring',
@@ -134,27 +234,21 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     name: 'Navidrome',
     runtime: 'docker',
     compose: 'navidrome',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
     healthCheck: { url: 'http://localhost:4533/rest/ping?f=json', interval: 15000 },
+    ports: [4533],
     dependsOn: [],
     autoStart: false,
     group: 'media',
-  },
-  {
-    id: 'rocm-exporter',
-    name: 'ROCm Exporter',
-    runtime: 'systemd',
-    unit: 'rocm-exporter',
-    healthCheck: { url: 'http://localhost:9101/metrics', interval: 15000 },
-    dependsOn: [],
-    autoStart: false,
-    group: 'monitoring',
   },
   {
     id: 'forgejo',
     name: 'Forgejo',
     runtime: 'docker',
     compose: 'forgejo',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
     healthCheck: { url: 'http://localhost:3000/api/v1/version', interval: 15000 },
+    ports: [3000],
     dependsOn: [],
     autoStart: false,
     group: 'dev',
@@ -164,7 +258,9 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     name: 'Portainer',
     runtime: 'docker',
     compose: 'portainer',
+    composeFile: '/home/rezxt/ai-stack/docker-compose.yml',
     healthCheck: { url: 'http://localhost:9003/api/status', interval: 15000 },
+    ports: [9003],
     dependsOn: [],
     autoStart: false,
     group: 'dev',
@@ -192,6 +288,7 @@ export class ServiceManager {
         group: def.group,
         health: 'stopped',
         accelerator: def.accelerator,
+        ports: def.ports,
       })
     }
   }
@@ -199,7 +296,10 @@ export class ServiceManager {
   private loadDefs(): ServiceDef[] {
     try {
       const raw = fs.readFileSync(SERVICES_PATH, 'utf-8')
-      return JSON.parse(raw)
+      const saved: ServiceDef[] = JSON.parse(raw)
+      const savedIds = new Set(saved.map((s) => s.id))
+      const merged = [...saved, ...DEFAULT_SERVICES.filter((d) => !savedIds.has(d.id))]
+      return merged
     } catch {
       const dir = path.dirname(SERVICES_PATH)
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
@@ -289,6 +389,27 @@ export class ServiceManager {
     return this.start(id)
   }
 
+  async getLogs(id: string): Promise<string> {
+    const def = this.getDef(id)
+    if (!def) return 'Unknown service'
+    return new Promise((resolve) => {
+      let output = ''
+      let child: ReturnType<typeof spawn>
+      if (def.runtime === 'docker' && def.compose) {
+        const file = def.composeFile || '/home/rezxt/ai-stack/docker-compose.yml'
+        child = spawn('docker', ['compose', '-f', file, 'logs', def.compose, '--tail', '300', '--no-color'], { stdio: ['ignore', 'pipe', 'pipe'] })
+      } else if (def.runtime === 'systemd' && def.unit) {
+        child = spawn('journalctl', ['-u', def.unit, '-n', '300', '--no-pager', '--no-hostname'], { stdio: ['ignore', 'pipe', 'pipe'] })
+      } else {
+        return resolve('Logs not available for this service type (process without stdio capture).')
+      }
+      child.stdout?.on('data', (d: Buffer) => { output += d.toString() })
+      child.stderr?.on('data', (d: Buffer) => { output += d.toString() })
+      child.on('close', () => resolve(output.trim() || '(no output)'))
+      child.on('error', (e: Error) => resolve(`Error: ${e.message}`))
+    })
+  }
+
   private startProcess(def: ServiceDef, isRestart = false): void {
     if (!def.command) throw new Error(`No command configured for ${def.id}`)
     if (!isRestart) this.restartCounts.set(def.id, 0)
@@ -351,12 +472,12 @@ export class ServiceManager {
   }
 
   private startDocker(def: ServiceDef): Promise<void> {
-    const file = def.composeFile || '/home/rezxt/bootstrap/docker-compose.yml'
+    const file = def.composeFile || '/home/rezxt/ai-stack/docker-compose.yml'
     return this.spawnDetached('docker', ['compose', '-f', file, 'up', '-d', def.compose!])
   }
 
   private stopDocker(def: ServiceDef): Promise<void> {
-    const file = def.composeFile || '/home/rezxt/bootstrap/docker-compose.yml'
+    const file = def.composeFile || '/home/rezxt/ai-stack/docker-compose.yml'
     return this.spawnDetached('docker', ['compose', '-f', file, 'stop', def.compose!])
   }
 
@@ -370,12 +491,42 @@ export class ServiceManager {
     return this.spawnDetached('systemctl', ['--user', 'stop', def.unit])
   }
 
+  private dockerContainerRunning(def: ServiceDef): Promise<boolean> {
+    return new Promise((resolve) => {
+      const file = def.composeFile || '/home/rezxt/ai-stack/docker-compose.yml'
+      const child = spawn('docker', ['compose', '-f', file, 'ps', def.compose!, '--format', 'json'], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+      let out = ''
+      child.stdout?.on('data', (d: Buffer) => { out += d.toString() })
+      child.on('close', () => {
+        try {
+          const running = out.trim().split('\n').filter(Boolean).some((line) => {
+            const obj = JSON.parse(line)
+            return obj.State === 'running'
+          })
+          resolve(running)
+        } catch {
+          resolve(false)
+        }
+      })
+      child.on('error', () => resolve(false))
+    })
+  }
+
+  private ping(def: ServiceDef): Promise<boolean> {
+    if (!def.healthCheck.url) return Promise.resolve(false)
+    const httpCheck = this.httpPing(def.healthCheck.url)
+    if (def.runtime !== 'docker' || !def.compose) return httpCheck
+    return Promise.all([httpCheck, this.dockerContainerRunning(def)]).then(([ok, running]) => ok && running)
+  }
+
   private startHealthCheck(def: ServiceDef): void {
     this.stopHealthCheck(def.id)
     if (!def.healthCheck.url) return
 
     const check = () => {
-      this.httpPing(def.healthCheck.url!).then((ok) => {
+      this.ping(def).then((ok) => {
         this.updateHealth(def.id, ok ? 'healthy' : 'unhealthy')
       })
     }
@@ -418,8 +569,12 @@ export class ServiceManager {
 
   probeAll(): void {
     for (const def of this.defs) {
+      // Process services can only be confirmed running when started by us —
+      // skipping HTTP-only probe prevents false-positives when a docker service
+      // happens to serve the same port.
+      if (def.runtime === 'process') continue
       if (def.healthCheck.url) {
-        this.httpPing(def.healthCheck.url).then((ok) => {
+        this.ping(def).then((ok) => {
           this.updateHealth(def.id, ok ? 'healthy' : 'stopped')
           if (ok) this.startHealthCheck(def)
         })

@@ -28,6 +28,11 @@ export const electronServices = {
   onStatus: (cb: (statuses: ServiceStatus[]) => void): void => {
     if (isElectron()) window.accel!.services.onStatus(cb)
   },
+
+  logs: async (id: string): Promise<string> => {
+    if (isElectron()) return window.accel!.services.logs(id)
+    return 'Not running in Electron'
+  },
 }
 
 export const electronWindow = {

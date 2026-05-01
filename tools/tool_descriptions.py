@@ -76,7 +76,8 @@ soundcloud_get_playlist — Get the full track list of a SoundCloud playlist.
 
 canvas_draw — Draw shapes on the Architecture session canvas. Call get_tool_description('canvas_draw') first.
 canvas_clear — Clear everything from the canvas.
-canvas_get_state — Returns instructions for viewing the current canvas state.
+canvas_get_state — Read all shapes on the canvas as text (type, position, label, color).
+canvas_screenshot — Capture the canvas as an image to visually inspect what's drawn.
 
 Media folders: /mnt/WD/Books/ | /mnt/WD/Audiobooks/ | /mnt/WD/Documents/ | /mnt/WD/Music/
 
@@ -299,7 +300,9 @@ Layout: left-to-right for sequences, top-to-bottom for hierarchies.""",
 
     "canvas_clear": """canvas_clear — Clear everything from the canvas. No parameters. Requires confirmation.""",
 
-    "canvas_get_state": """canvas_get_state — Returns instructions for viewing the canvas. Use screenshot_url('http://localhost/#architecture') to see it visually.""",
+    "canvas_get_state": """canvas_get_state — Returns a text list of all shapes on the canvas (type, position, label, color, size). Use this to understand what's already drawn before adding more.""",
+
+    "canvas_screenshot": """canvas_screenshot — Captures the current canvas as a PNG image and returns it for visual inspection. No parameters. Use after drawing to verify the result, or to read user-drawn content visually.""",
 }
 
 

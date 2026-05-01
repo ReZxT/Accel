@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from config import config
-from tools.canvas_tools import canvas_draw, canvas_clear, canvas_get_state
+from tools.canvas_tools import canvas_draw, canvas_clear, canvas_get_state, canvas_screenshot
 from tools.navidrome_tools import (
     navidrome_search, navidrome_get_playlists, navidrome_get_playlist,
     navidrome_create_playlist, navidrome_update_playlist, navidrome_delete_playlist,
@@ -511,6 +511,7 @@ TOOL_REGISTRY = {
     "canvas_draw": canvas_draw,
     "canvas_clear": canvas_clear,
     "canvas_get_state": canvas_get_state,
+    "canvas_screenshot": canvas_screenshot,
     "soundcloud_get_playlists": soundcloud_get_playlists,
     "soundcloud_get_playlist": soundcloud_get_playlist,
     "ingest_file": ingest_file,

@@ -18,21 +18,24 @@ A local-first personal operating system for Intelligence Amplification — not a
 
 **CPU:** Ryzen 5 5600X | **GPU:** RX6700XT (12GB VRAM, AMD — ROCm/HIP, not CUDA) | **RAM:** 32GB | **Storage:** ~3TB NVMe
 
-12GB VRAM fits Q6_K 9B with room for KV cache. CPU offloading viable for embeddings/curator. Always suggest ROCm-compatible approaches.
+12GB VRAM fits Q6_K 9B + turbo4 KV cache + mmproj + 0.8B curator simultaneously (~10.5 GB). Always suggest ROCm-compatible approaches.
 
 ## Running Stack
 
 | Service | Port | Notes |
 |---|---|---|
-| nginx (UI) | 80 | Serves `index.html`, `blob_ui.js`, `blob_ui.css` |
+| nginx (UI) | 80 | Serves Electron/React build via bootstrap compose |
 | bootstrap | 8100 | Active pipeline — FastAPI + custom agentic loop |
 | n8n | 5678 | Superseded — running but UI no longer calls it |
 | Qdrant | 6333/6334 | Vector DB |
-| llama.cpp chat | 8080 | GPU (ngl=99), 65K ctx, started via `start_chat_dimoe.sh` |
+| llama.cpp chat | 8080 | GPU (ngl=99), 65K ctx, turbo4 KV, mmproj vision — `Qwen3.5-9B-Q6_K.gguf` via llama-cpp-turboquant |
 | llama.cpp embeddings | 8081 | Docker (llama-cpu-local), bge-m3-q8_0, 8192 ctx |
-| llama.cpp curator | 8082 | Docker (llama-cpu-local), Qwen INSTRUCT, 8192 ctx |
-| llama.cpp embeddings (GPU) | 8083 | On-demand, spun up/down by `api/embeddings.py`; bge-m3, GPU |
-| code-splitter | 9200 | FastAPI — tree-sitter splitting, log/text/chat, image preprocess, session/profile/ingest |
+| llama.cpp curator | 8082 | Native GPU (ngl=99), `Qwen3.5-0.8B-Q8_0.gguf`, 8192 ctx, ~163 t/s |
+| llama.cpp qwen-mini | 8083 | Docker (llama-cpu-local), Qwen3.5-0.8B-Q8_0, 32K ctx (backup/unused) |
+| code-splitter | 9200 | Docker (ai-stack compose) — tree-sitter splitting, log/text/chat, image preprocess |
+| SearXNG | 8888 | Docker — web search backend |
+| Playwright | 9300 | Docker — headless browser / screenshot |
+| MCP Server | 9400 | Docker — tool MCP bridge |
 | Forgejo | 3000 | Self-hosted git |
 | MinIO | 9000/9001 | Object storage |
 | Prometheus | 9090 | Scrapes node-exporter (9100), Qdrant, rocm-exporter (9101 host) |
@@ -42,7 +45,17 @@ A local-first personal operating system for Intelligence Amplification — not a
 
 `rocm_exporter.py` runs as systemd service `rocm-exporter` on the host.
 
-**Start chat model:** `start_chat_dimoe.sh` (default), `start_chat_gemma4.sh`, `start_chat_step3.sh`  
+**Start chat model (native, TurboQuant+):**
+```
+/home/rezxt/ai-stack/llama-cpp-turboquant/build/bin/llama-server \
+  -m /mnt/WD/Models/Qwen3.5-9B-Q6_K.gguf \
+  --mmproj /mnt/WD/Models/Qwen3.5-9B.mmproj-Q8_0.gguf \
+  -c 65536 --host 0.0.0.0 --port 8080 \
+  -ngl 99 --jinja --ubatch-size 256 \
+  -ctk turbo4 -ctv turbo4
+```
+**Start curator (native GPU):** `llama-server -m /mnt/WD/Models/Qwen3.5-0.8B-Q8_0.gguf -c 8192 --host 0.0.0.0 --port 8082 -ngl 99 --jinja`  
+Or use the Electron service dashboard → Chat Model → Start.  
 **Run bootstrap:** `cd /home/rezxt/bootstrap && .venv/bin/python main.py`
 
 ## Models
@@ -50,10 +63,14 @@ A local-first personal operating system for Intelligence Amplification — not a
 All models at `/mnt/WD/Models/`.
 
 **Active:**
-- **Chat:** `Qwen3.5-9B-Deckard-Claude-DIMOE-Uncensored-Heretic-Thinking.Q5_K_M.gguf` — DIMOE fine-tune, vision via mmproj, 65K ctx, THINKING variant. Use smoothing_factor=1.5 (Quadratic Sampling).
-- **Vision projector:** `Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED.mmproj-Q8_0.gguf` — compatible across same-architecture fine-tunes
+- **Chat:** `Qwen3.5-9B-Q6_K.gguf` — clean base, 65K ctx, GPU (ngl=99), `--jinja`, turbo4 KV cache (~544 MB vs ~2 GB f16), mmproj vision, ubatch-size 256. Binary: `llama-cpp-turboquant`. ~40 t/s.
 - **Embeddings:** `bge-m3-q8_0.gguf` — CPU, 1024-dim (locked in; swapping requires re-embedding all collections)
-- **Curator:** `Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED.Q6_K.gguf` — CPU, INSTRUCT variant, thinking suppressed
+- **Curator:** `Qwen3.5-0.8B-Q8_0.gguf` — GPU (ngl=99), port 8082, ~163 t/s. Uses raw `/completion` endpoint with `<think>\n</think>\n` injection (thinking_budget_tokens=0 broken in this model). Handles preflight routing + episode compression.
+- **Qwen Mini:** `Qwen3.5-0.8B-Q8_0.gguf` — CPU Docker, port 8083 (backup, unused while curator runs natively)
+
+**Previously used / available:**
+- `Qwen3.5-9B-Deckard-Claude-DIMOE-Uncensored-Heretic-Thinking.Q5_K_M.gguf` — DIMOE fine-tune with mmproj vision, THINKING variant
+- Vision projector: `Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED.mmproj-Q8_0.gguf`
 
 **Voice models (active):**
 - **STT:** faster-whisper `base` — CPU, int8, bilingual (Polish + English auto-detect), 16kHz
@@ -179,11 +196,23 @@ Design authority: `notes/` (Obsidian vault). Read when context is needed — the
 - Response filtered before TTS: strips `<think>` blocks, markdown, code blocks, URLs
 - Piper binary: `voice/models/piper/piper/piper`; model: `voice/models/piper/en_US-lessac-medium.onnx`
 
+## Electron Desktop App
+
+`/home/rezxt/bootstrap/ui/` — React + Vite + Electron 41, built as AppImage.
+
+- **Production build:** `npm run build:electron` → `release/Accel-0.0.0.AppImage`
+- **Launch:** `ELECTRON_DISABLE_SANDBOX=1 ./release/Accel-0.0.0.AppImage --no-sandbox`
+- **Local proxy server:** main process spins up a Node HTTP proxy on a random loopback port in production (mirrors Vite dev proxy). All `/chat`, `/notes`, `/navidrome`, etc. routes forward to the right backends. This is why fetch works from `file://` without CORS issues.
+- **Service dashboard:** manages all stack services (start/stop/restart + health, ports, logs). Process-type services (native llama-server) are NOT auto-detected on launch — only docker/systemd services are, to avoid false-positives when a container serves the same port.
+- **Services config:** `~/.config/accel/services.json` — auto-created from defaults on first run. Delete to reset to current DEFAULT_SERVICES.
+- **Key UX:** window focus → textarea auto-focuses. Approval blocks: `←`/`→` switch Allow/Deny, Enter confirms. Only the latest pending approval shown (previous ones replaced).
+- **Logs:** each service row has a logs button → `docker compose logs --tail 300` or `journalctl`.
+
 ## llama.cpp Build
 
 - Source: `/home/rezxt/ai-stack/llama.cpp/`, ROCm build for gfx1030
 - Host ROCm: 6.3.1 — prebuilt tarballs for ROCm 7.x will NOT work; must build from source
-- Current binary: b8780
+- Current binary: b8780 (latest: b8994 as of 2026-05-01)
 - Always use `--jinja` flag (embedded chat template)
 - Embeddings/curator run in Docker to avoid VRAM usage even at `-ngl 0`
 - Rebuild: `cmake --build build --config Release -j$(nproc)` then `sudo cp build/bin/llama-server /usr/local/bin/llama-server` (stop chat model first)

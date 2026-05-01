@@ -220,9 +220,20 @@ Start supporting services:
 docker compose up -d
 ```
 
-Start chat model:
+Start chat model (TurboQuant+ with vision):
 ```bash
-./start_chat_dimoe.sh
+/home/rezxt/ai-stack/llama-cpp-turboquant/build/bin/llama-server \
+  -m /mnt/WD/Models/Qwen3.5-9B-Q6_K.gguf \
+  --mmproj /mnt/WD/Models/Qwen3.5-9B.mmproj-Q8_0.gguf \
+  -c 65536 --host 0.0.0.0 --port 8080 \
+  -ngl 99 --jinja --ubatch-size 256 \
+  -ctk turbo4 -ctv turbo4
+```
+
+Start curator:
+```bash
+llama-server -m /mnt/WD/Models/Qwen3.5-0.8B-Q8_0.gguf \
+  -c 8192 --host 0.0.0.0 --port 8082 -ngl 99 --jinja
 ```
 
 ---
@@ -231,10 +242,11 @@ Start chat model:
 
 Designed for **Ryzen 5 5600X + RX 6700 XT (12GB VRAM, ROCm) + 32GB RAM**.
 
-- Chat model runs fully on GPU (Q5_K_M 9B, 65K context)
-- Embeddings and curator run on CPU in Docker to avoid VRAM contention
-- 12GB VRAM fits Q6_K 9B with room for KV cache
-- All models stored at `/mnt/WD/Models/`
+- Chat (9B Q6_K) runs on GPU with TurboQuant+ KV compression (`-ctk turbo4 -ctv turbo4`) — 544 MB KV at 65K ctx vs ~2 GB with f16. Includes vision projector (mmproj).
+- Curator (0.8B Q8_0) runs on GPU at ~163 t/s — preflight routing + episode compression in <0.5s
+- Embeddings run on CPU in Docker
+- All three services fit simultaneously: ~10.5 GB / 12 GB VRAM
+- All models at `/mnt/WD/Models/`
 
 ---
 

@@ -18,6 +18,7 @@ export interface ServiceDef {
   autoStart: boolean
   group: ServiceGroupId
   accelerator?: 'gpu' | 'cpu'
+  ports?: number[]
 }
 
 export interface ServiceStatus {
@@ -28,6 +29,7 @@ export interface ServiceStatus {
   pid?: number
   uptime?: number
   accelerator?: 'gpu' | 'cpu'
+  ports?: number[]
 }
 
 export interface AccelConfig {

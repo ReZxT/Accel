@@ -134,4 +134,5 @@ export interface ServiceStatus {
   pid?: number
   uptime?: number
   accelerator?: 'gpu' | 'cpu'
+  ports?: number[]
 }
