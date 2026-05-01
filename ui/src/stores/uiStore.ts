@@ -1,14 +1,15 @@
 import { create } from 'zustand'
-import type { PanelType, OverlayType, MessageImage, MessageFile } from '../types'
+import type { OverlayType, MessageImage, MessageFile, PanelMode, OpenPanelPayload } from '../types'
 
 interface UIStore {
   leftNavCollapsed: boolean
   toggleLeftNav: () => void
 
-  rightPanelOpen: boolean
-  rightPanelType: PanelType
-  rightPanelData: unknown
-  openPanel: (type: PanelType, data?: unknown) => void
+  panelOpen: boolean
+  panelMode: PanelMode
+  panelPayload: OpenPanelPayload | undefined
+  openPanelMode: (mode: PanelMode, payload?: OpenPanelPayload) => void
+  togglePanel: () => void
   closePanel: () => void
 
   activeOverlay: OverlayType
@@ -30,13 +31,13 @@ export const useUIStore = create<UIStore>((set) => ({
   leftNavCollapsed: false,
   toggleLeftNav: () => set((s) => ({ leftNavCollapsed: !s.leftNavCollapsed })),
 
-  rightPanelOpen: false,
-  rightPanelType: null,
-  rightPanelData: undefined,
-  openPanel: (type, data) =>
-    set({ rightPanelOpen: true, rightPanelType: type, rightPanelData: data }),
-  closePanel: () =>
-    set({ rightPanelOpen: false, rightPanelType: null, rightPanelData: undefined }),
+  panelOpen: false,
+  panelMode: 'music',
+  panelPayload: undefined,
+  openPanelMode: (mode, payload) =>
+    set({ panelOpen: true, panelMode: mode, panelPayload: payload }),
+  togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
+  closePanel: () => set({ panelOpen: false, panelPayload: undefined }),
 
   activeOverlay: null,
   openOverlay: (type) => set({ activeOverlay: type }),

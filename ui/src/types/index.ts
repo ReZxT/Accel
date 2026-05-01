@@ -41,6 +41,13 @@ export interface ApprovalRequest {
   args: Record<string, unknown>
 }
 
+export type PanelMode = 'music' | 'canvas' | 'notes' | 'file'
+
+export interface OpenPanelPayload {
+  path?: string      // for notes/file: vault-relative path to open
+  content?: string   // for file: inline content if no path
+}
+
 export type SSEChunk =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
@@ -49,6 +56,7 @@ export type SSEChunk =
   | { type: 'approval_request'; request_id: string; tool: string; args: Record<string, unknown> }
   | { type: 'tool_denied'; tool: string }
   | { type: 'canvas_command'; command: string; data: Record<string, unknown> }
+  | { type: 'open_panel'; mode: PanelMode; payload?: OpenPanelPayload }
   | { type: 'play_queue'; tracks: Track[] }
   | { type: 'route'; route: Record<string, unknown> }
   | { type: 'error'; text: string }
@@ -80,14 +88,6 @@ export interface Session {
   id: SessionId
   label: string
   icon: string
-}
-
-export type PanelType = 'canvas' | 'music' | 'image' | 'file' | null
-
-export interface RightPanelState {
-  open: boolean
-  type: PanelType
-  data?: unknown
 }
 
 export type OverlayType = 'settings' | 'memory' | null
