@@ -56,6 +56,8 @@ class WriteBody(BaseModel):
 
 @router.put("/file")
 async def put_file(body: WriteBody):
+    if not body.path.endswith('.md'):
+        raise HTTPException(status_code=400, detail="Only .md files allowed")
     full = _safe_path(body.path)
     os.makedirs(os.path.dirname(full), exist_ok=True)
     with open(full, "w", encoding="utf-8") as f:

@@ -36,7 +36,7 @@ export const useUIStore = create<UIStore>((set) => ({
   panelPayload: undefined,
   openPanelMode: (mode, payload) =>
     set({ panelOpen: true, panelMode: mode, panelPayload: payload }),
-  togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
+  togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen, panelPayload: s.panelOpen ? undefined : s.panelPayload })),
   closePanel: () => set({ panelOpen: false, panelPayload: undefined }),
 
   activeOverlay: null,
