@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { Session } from '../../types'
+import Tooltip from '../ui/Tooltip'
 
 const ICONS: Record<string, ReactNode> = {
   MessageSquare: (
@@ -37,10 +38,9 @@ interface Props {
 }
 
 export default function SessionButton({ session, active, collapsed, onClick }: Props) {
-  return (
+  const button = (
     <button
       onClick={onClick}
-      title={session.label}
       className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors cursor-pointer ${
         active
           ? 'bg-accent-soft text-text-primary'
@@ -51,4 +51,6 @@ export default function SessionButton({ session, active, collapsed, onClick }: P
       {!collapsed && <span className="text-sm truncate">{session.label}</span>}
     </button>
   )
+
+  return collapsed ? <Tooltip text={session.label}>{button}</Tooltip> : button
 }
