@@ -1,0 +1,13 @@
+appId: com.accel.desktop
+productName: Accel
+directories:
+  output: release
+files:
+  - dist/**/*
+  - dist-electron/**/*
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Utility
+  icon: build/icon.png
