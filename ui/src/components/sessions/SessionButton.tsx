@@ -44,7 +44,7 @@ export default function SessionButton({ session, active, collapsed, onClick }: P
       className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors cursor-pointer ${
         active
           ? 'bg-accent-soft text-text-primary'
-          : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+          : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
       }`}
     >
       <span className="flex-shrink-0">{ICONS[session.icon]}</span>
