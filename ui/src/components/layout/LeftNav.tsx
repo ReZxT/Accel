@@ -39,16 +39,14 @@ export default function LeftNav() {
       </Tooltip>
 
       {/* Sessions */}
-      {!collapsed && (
-        <div className="flex-1 overflow-y-auto px-2">
-          <SessionList collapsed={collapsed} />
-        </div>
-      )}
+      <div className={`flex-1 px-2 ${collapsed ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+        <SessionList collapsed={collapsed} />
+      </div>
 
       {/* Bottom controls */}
       <div className="flex flex-col gap-1 p-2 border-t border-border">
         {isElectron() && (
-          <Tooltip text="Services">
+          <Tooltip text="Services" disabled={!collapsed}>
             <button
               onClick={() => setActiveView(activeView === 'services' ? 'chat' : 'services')}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors cursor-pointer ${
@@ -67,7 +65,7 @@ export default function LeftNav() {
             </button>
           </Tooltip>
         )}
-        <Tooltip text="Settings">
+        <Tooltip text="Settings" disabled={!collapsed}>
           <button
             onClick={() => openOverlay('settings')}
             className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
