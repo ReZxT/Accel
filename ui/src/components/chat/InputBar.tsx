@@ -1,13 +1,58 @@
 import { useState, useRef, useCallback } from 'react'
 import { useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import type { MessageImage, MessageFile } from '../../types'
+
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+
+const LANGUAGE_MAP: Record<string, string> = {
+  ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
+  py: 'python', rs: 'rust', go: 'go', cpp: 'cpp', c: 'c', cs: 'csharp',
+  java: 'java', rb: 'ruby', sh: 'bash', md: 'markdown', json: 'json',
+  yaml: 'yaml', yml: 'yaml', toml: 'toml', html: 'html', css: 'css',
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((res, rej) => {
+    const reader = new FileReader()
+    reader.onload = () => res((reader.result as string).split(',')[1])
+    reader.onerror = rej
+    reader.readAsDataURL(file)
+  })
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((res, rej) => {
+    const reader = new FileReader()
+    reader.onload = () => res(reader.result as string)
+    reader.onerror = rej
+    reader.readAsText(file)
+  })
+}
 
 export default function InputBar() {
   const [text, setText] = useState('')
+  const [images, setImages] = useState<MessageImage[]>([])
+  const [files, setFiles] = useState<MessageFile[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const isLoading = useChatStore((s) => s.isLoading)
   const cancelStream = useChatStore((s) => s.cancelStream)
   const activeSession = useSessionStore((s) => s.activeSession)
+
+  const handleFiles = useCallback(async (fileList: FileList) => {
+    for (const file of Array.from(fileList)) {
+      if (IMAGE_TYPES.has(file.type)) {
+        const base64 = await readFileAsBase64(file)
+        const dataUrl = `data:${file.type};base64,${base64}`
+        setImages((prev) => [...prev, { base64, name: file.name, type: file.type, dataUrl }])
+      } else {
+        const content = await readFileAsText(file)
+        const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+        setFiles((prev) => [...prev, { content, name: file.name, language: LANGUAGE_MAP[ext] ?? '' }])
+      }
+    }
+  }, [])
 
   const handleSend = useCallback(() => {
     if (isLoading) {
@@ -15,17 +60,21 @@ export default function InputBar() {
       return
     }
     const trimmed = text.trim()
-    if (!trimmed) return
+    if (!trimmed && images.length === 0 && files.length === 0) return
 
     const { addMessage, startLoading, appendStreamText, appendStreamThinking, addStreamToolCall, addStreamToolResult, addStreamApproval, finishStreaming } = useChatStore.getState()
 
     const userMsg = {
       role: 'user' as const,
-      content: trimmed,
+      content: trimmed || (images.length > 0 ? '[image]' : '[file]'),
       timestamp: new Date().toISOString(),
+      images: images.length > 0 ? images : undefined,
+      files: files.length > 0 ? files : undefined,
     }
     addMessage(userMsg)
     setText('')
+    setImages([])
+    setFiles([])
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
 
     const controller = new AbortController()
@@ -33,11 +82,13 @@ export default function InputBar() {
 
     const messages = useChatStore.getState().messages
     const payload = {
-      chatInput: trimmed,
+      chatInput: trimmed || (images.length > 0 ? 'What do you see?' : 'Describe this file.'),
       chatHistory: messages.slice(-60).map((m) =>
         m.role === 'bot' ? { ...m, role: 'assistant' } : m,
       ),
       sessionId: activeSession,
+      images: images.map(({ base64, name, type }) => ({ base64, name, type })),
+      files: files.map(({ content, name, language }) => ({ content, name, language })),
     }
 
     fetch('/chat', {
@@ -105,9 +156,62 @@ export default function InputBar() {
     el.style.height = Math.min(el.scrollHeight, 150) + 'px'
   }
 
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files)
+  }, [handleFiles])
+
   return (
     <div className="px-4 pb-4 pt-2">
-      <div className="flex items-end gap-3 bg-surface border border-border rounded-lg px-4 py-3 focus-within:border-border-hi transition-colors">
+      {/* Attachment previews */}
+      {(images.length > 0 || files.length > 0) && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          {images.map((img, i) => (
+            <div key={i} className="relative group">
+              <img src={img.dataUrl} alt={img.name} className="h-16 w-16 object-cover rounded-md border border-border" />
+              <button
+                onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
+                className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-error text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+              >×</button>
+            </div>
+          ))}
+          {files.map((f, i) => (
+            <div key={i} className="relative group flex items-center gap-1.5 bg-surface border border-border rounded-md px-2 py-1">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-tertiary"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <span className="text-xs text-text-secondary max-w-[120px] truncate">{f.name}</span>
+              <button
+                onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
+                className="text-text-tertiary hover:text-error transition-colors ml-1"
+              >×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div
+        className="flex items-end gap-3 bg-surface border border-border rounded-lg px-3 py-3 focus-within:border-border-hi transition-colors"
+        onDrop={handleDrop}
+        onDragOver={(e) => e.preventDefault()}
+      >
+        {/* Attachment button */}
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="flex-shrink-0 text-text-tertiary hover:text-text-secondary transition-colors mb-0.5"
+          title="Attach file or image"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/*,text/*,.py,.ts,.tsx,.js,.jsx,.rs,.go,.cpp,.c,.cs,.java,.rb,.sh,.md,.json,.yaml,.yml,.toml"
+          className="hidden"
+          onChange={(e) => e.target.files && handleFiles(e.target.files)}
+        />
+
         <textarea
           ref={textareaRef}
           value={text}

@@ -33,6 +33,19 @@ export default function MessageItem({ message }: Props) {
         {/* Content */}
         <div className="min-w-0 flex-1">
           {message.thoughts && <ThinkingBlock content={message.thoughts} />}
+          {(message.images?.length || message.files?.length) ? (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {message.images?.map((img, i) => (
+                <img key={i} src={img.dataUrl} alt={img.name} className="h-24 max-w-[200px] object-cover rounded-md border border-border" />
+              ))}
+              {message.files?.map((f, i) => (
+                <div key={i} className="flex items-center gap-1.5 bg-surface border border-border rounded-md px-2 py-1">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-tertiary"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  <span className="text-xs text-text-secondary">{f.name}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div
             className="text-sm leading-relaxed prose-invert [&_pre]:bg-black/40 [&_pre]:border [&_pre]:border-border [&_pre]:rounded-md [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:text-[13px] [&_code]:font-mono [&_code]:text-[13px] [&_code]:bg-white/[0.06] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_a]:text-blue-400 [&_a]:no-underline [&_a:hover]:text-blue-300 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1"
             dangerouslySetInnerHTML={{ __html: formatMarkdown(message.content) }}
