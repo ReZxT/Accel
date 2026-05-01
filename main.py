@@ -33,4 +33,4 @@ app.include_router(canvas_router)
 app.include_router(notes_router)
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host=config.host, port=config.port, reload=True)
+    uvicorn.run("main:app", host=config.host, port=config.port, reload=False)

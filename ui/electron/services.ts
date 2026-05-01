@@ -15,7 +15,7 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     id: 'llama-chat',
     name: 'Chat Model',
     runtime: 'process',
-    command: '',
+    command: 'llama-server -m /mnt/WD/Models/Qwen3.5-9B-Deckard-Claude-DIMOE-Uncensored-Heretic-Thinking.Q5_K_M.gguf --mmproj /mnt/WD/Models/Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED.mmproj-Q8_0.gguf -c 65536 --host 0.0.0.0 --port 8080 -ngl 99 --jinja',
     healthCheck: { url: 'http://localhost:8080/health', interval: 10000 },
     dependsOn: [],
     autoStart: false,
@@ -134,11 +134,16 @@ const DEFAULT_SERVICES: ServiceDef[] = [
   },
 ]
 
+const MAX_RESTARTS = 5
+const RESTART_BACKOFF_MS = [2000, 4000, 8000, 16000, 30000]
+
 export class ServiceManager {
   private defs: ServiceDef[]
   private statuses: Map<string, ServiceStatus> = new Map()
   private processes: Map<string, ChildProcess> = new Map()
   private healthTimers: Map<string, ReturnType<typeof setInterval>> = new Map()
+  private restartCounts: Map<string, number> = new Map()
+  private restartTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
   private onChange: ((statuses: ServiceStatus[]) => void) | null = null
 
   constructor() {
@@ -246,22 +251,50 @@ export class ServiceManager {
     return this.start(id)
   }
 
-  private startProcess(def: ServiceDef): void {
+  private startProcess(def: ServiceDef, isRestart = false): void {
     if (!def.command) throw new Error(`No command configured for ${def.id}`)
+    if (!isRestart) this.restartCounts.set(def.id, 0)
+
     const parts = def.command.split(/\s+/)
     const child = spawn(parts[0], parts.slice(1), {
       stdio: 'ignore',
       detached: false,
       env: { ...process.env },
     })
-    child.on('exit', () => {
+    child.on('exit', (code) => {
       this.processes.delete(def.id)
-      this.updateHealth(def.id, 'stopped')
+      const intentional = !this.healthTimers.has(def.id)
+      if (intentional) {
+        this.updateHealth(def.id, 'stopped')
+        return
+      }
+      // Unexpected exit — auto-restart with backoff
+      const attempts = (this.restartCounts.get(def.id) ?? 0)
+      if (attempts >= MAX_RESTARTS) {
+        this.updateHealth(def.id, 'unhealthy')
+        this.stopHealthCheck(def.id)
+        return
+      }
+      const delay = RESTART_BACKOFF_MS[Math.min(attempts, RESTART_BACKOFF_MS.length - 1)]
+      this.restartCounts.set(def.id, attempts + 1)
+      this.updateHealth(def.id, 'starting')
+      const timer = setTimeout(() => {
+        this.restartTimers.delete(def.id)
+        this.startProcess(def, true)
+      }, delay)
+      this.restartTimers.set(def.id, timer)
     })
     this.processes.set(def.id, child)
   }
 
   private stopProcess(id: string): void {
+    // Cancel any pending restart before stopping
+    const timer = this.restartTimers.get(id)
+    if (timer) {
+      clearTimeout(timer)
+      this.restartTimers.delete(id)
+    }
+    this.restartCounts.delete(id)
     const child = this.processes.get(id)
     if (child && child.pid) {
       child.kill('SIGTERM')
@@ -314,6 +347,7 @@ export class ServiceManager {
 
   private updateHealth(id: string, health: ServiceHealth): void {
     const current = this.statuses.get(id)
+    if (health === 'healthy') this.restartCounts.set(id, 0)
     if (current && current.health !== health) {
       current.health = health
       this.notify()
@@ -346,9 +380,9 @@ export class ServiceManager {
   }
 
   destroy(): void {
-    for (const timer of this.healthTimers.values()) {
-      clearInterval(timer)
-    }
+    for (const timer of this.healthTimers.values()) clearInterval(timer)
+    for (const timer of this.restartTimers.values()) clearTimeout(timer)
     this.healthTimers.clear()
+    this.restartTimers.clear()
   }
 }
