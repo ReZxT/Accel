@@ -4,6 +4,7 @@ import { useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { getToolSettings, updateToolSettings } from '../../api/tools'
 import { toggleVoice, getVoiceStatus } from '../../api/voice'
+import { isElectron } from '../../api/electron'
 import type { ToolPolicy } from '../../types'
 
 const TOOL_LABELS: Record<string, { desc: string; irreversible: boolean }> = {
@@ -94,6 +95,19 @@ export default function SettingsDialog() {
           >
             Clear Chat
           </button>
+
+          {/* DevTools — Electron dev only */}
+          {isElectron() && (
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-text-secondary">Developer Tools</span>
+              <button
+                onClick={() => window.accel?.window.openDevTools()}
+                className="text-xs px-3 py-1 rounded border border-border text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors cursor-pointer"
+              >
+                Open DevTools
+              </button>
+            </div>
+          )}
 
           {/* Tool approval */}
           <div>

@@ -12,6 +12,7 @@ interface AccelAPI {
     minimize: () => void
     toggleMaximize: () => void
     close: () => void
+    openDevTools: () => void
   }
   config: {
     get: (key: string) => Promise<unknown>

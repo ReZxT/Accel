@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('accel', {
     minimize: () => ipcRenderer.send('window:minimize'),
     toggleMaximize: () => ipcRenderer.send('window:toggleMaximize'),
     close: () => ipcRenderer.send('window:close'),
+    openDevTools: () => ipcRenderer.send('window:openDevTools'),
   },
   config: {
     get: (key: string) => ipcRenderer.invoke('config:get', key),

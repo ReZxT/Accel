@@ -31,6 +31,10 @@ export function registerIpcHandlers(
     configStore.set(key as any, val as any)
   })
 
+  ipcMain.on('window:openDevTools', () => {
+    getWindow()?.webContents.openDevTools({ mode: 'detach' })
+  })
+
   ipcMain.on('window:minimize', () => {
     getWindow()?.minimize()
   })
