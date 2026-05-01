@@ -6,9 +6,9 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "dev:electron": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev:electron": "tsc -p tsconfig.electron.json && echo '{\"type\":\"commonjs\"}' > dist-electron/package.json && concurrently -k \"vite\" \"wait-on http://localhost:5173 && ELECTRON_DISABLE_SANDBOX=1 electron .\"",
     "build": "tsc -b && vite build",
-    "build:electron": "tsc -b && vite build && tsc -p tsconfig.electron.json && electron-builder",
+    "build:electron": "tsc -b && vite build && tsc -p tsconfig.electron.json && echo '{\"type\":\"commonjs\"}' > dist-electron/package.json && electron-builder",
     "lint": "eslint .",
     "preview": "vite preview"
   },

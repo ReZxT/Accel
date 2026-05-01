@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 release
 dist-electron
+dist-electron/package.json
+tsconfig.electron.tsbuildinfo
