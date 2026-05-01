@@ -3,6 +3,7 @@ import AppShell from './components/layout/AppShell'
 import MessageStream from './components/chat/MessageStream'
 import InputBar from './components/chat/InputBar'
 import SettingsDialog from './components/overlays/SettingsDialog'
+import ServiceDashboard from './components/services/ServiceDashboard'
 import { useChatStore } from './stores/chatStore'
 import { useSessionStore } from './stores/sessionStore'
 import { useUIStore } from './stores/uiStore'
@@ -12,6 +13,7 @@ export default function App() {
   const loadHistory = useChatStore((s) => s.loadHistory)
   const openPanel = useUIStore((s) => s.openPanel)
   const closePanel = useUIStore((s) => s.closePanel)
+  const activeView = useUIStore((s) => s.activeView)
 
   useEffect(() => {
     loadHistory(activeSession)
@@ -37,8 +39,14 @@ export default function App() {
 
   return (
     <AppShell>
-      <MessageStream />
-      <InputBar />
+      {activeView === 'services' ? (
+        <ServiceDashboard />
+      ) : (
+        <>
+          <MessageStream />
+          <InputBar />
+        </>
+      )}
       <SettingsDialog />
     </AppShell>
   )

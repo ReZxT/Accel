@@ -14,6 +14,9 @@ interface UIStore {
   activeOverlay: OverlayType
   openOverlay: (type: OverlayType) => void
   closeOverlay: () => void
+
+  activeView: 'chat' | 'services'
+  setActiveView: (view: 'chat' | 'services') => void
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -31,4 +34,7 @@ export const useUIStore = create<UIStore>((set) => ({
   activeOverlay: null,
   openOverlay: (type) => set({ activeOverlay: type }),
   closeOverlay: () => set({ activeOverlay: null }),
+
+  activeView: 'chat',
+  setActiveView: (view) => set({ activeView: view }),
 }))
