@@ -1,58 +1,54 @@
 import { useState, useRef, useCallback } from 'react'
 import { useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
-import type { MessageImage, MessageFile } from '../../types'
-
-const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
-
-const LANGUAGE_MAP: Record<string, string> = {
-  ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
-  py: 'python', rs: 'rust', go: 'go', cpp: 'cpp', c: 'c', cs: 'csharp',
-  java: 'java', rb: 'ruby', sh: 'bash', md: 'markdown', json: 'json',
-  yaml: 'yaml', yml: 'yaml', toml: 'toml', html: 'html', css: 'css',
-}
-
-function readFileAsBase64(file: File): Promise<string> {
-  return new Promise((res, rej) => {
-    const reader = new FileReader()
-    reader.onload = () => res((reader.result as string).split(',')[1])
-    reader.onerror = rej
-    reader.readAsDataURL(file)
-  })
-}
-
-function readFileAsText(file: File): Promise<string> {
-  return new Promise((res, rej) => {
-    const reader = new FileReader()
-    reader.onload = () => res(reader.result as string)
-    reader.onerror = rej
-    reader.readAsText(file)
-  })
-}
+import { useUIStore } from '../../stores/uiStore'
 
 export default function InputBar() {
   const [text, setText] = useState('')
-  const [images, setImages] = useState<MessageImage[]>([])
-  const [files, setFiles] = useState<MessageFile[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isLoading = useChatStore((s) => s.isLoading)
   const cancelStream = useChatStore((s) => s.cancelStream)
   const activeSession = useSessionStore((s) => s.activeSession)
+  const pendingImages = useUIStore((s) => s.pendingImages)
+  const pendingFiles = useUIStore((s) => s.pendingFiles)
+  const addPendingAttachments = useUIStore((s) => s.addPendingAttachments)
+  const removeImage = useUIStore((s) => s.removeImage)
+  const removeFile = useUIStore((s) => s.removeFile)
+  const clearAttachments = useUIStore((s) => s.clearAttachments)
 
   const handleFiles = useCallback(async (fileList: FileList) => {
+    const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+    const LANGUAGE_MAP: Record<string, string> = {
+      ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
+      py: 'python', rs: 'rust', go: 'go', cpp: 'cpp', c: 'c', cs: 'csharp',
+      java: 'java', rb: 'ruby', sh: 'bash', md: 'markdown', json: 'json',
+      yaml: 'yaml', yml: 'yaml', toml: 'toml', html: 'html', css: 'css',
+    }
+    const imgs = []
+    const files = []
     for (const file of Array.from(fileList)) {
       if (IMAGE_TYPES.has(file.type)) {
-        const base64 = await readFileAsBase64(file)
-        const dataUrl = `data:${file.type};base64,${base64}`
-        setImages((prev) => [...prev, { base64, name: file.name, type: file.type, dataUrl }])
+        const base64 = await new Promise<string>((res, rej) => {
+          const r = new FileReader()
+          r.onload = () => res((r.result as string).split(',')[1])
+          r.onerror = rej
+          r.readAsDataURL(file)
+        })
+        imgs.push({ base64, name: file.name, type: file.type, dataUrl: `data:${file.type};base64,${base64}` })
       } else {
-        const content = await readFileAsText(file)
+        const content = await new Promise<string>((res, rej) => {
+          const r = new FileReader()
+          r.onload = () => res(r.result as string)
+          r.onerror = rej
+          r.readAsText(file)
+        })
         const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
-        setFiles((prev) => [...prev, { content, name: file.name, language: LANGUAGE_MAP[ext] ?? '' }])
+        files.push({ content, name: file.name, language: LANGUAGE_MAP[ext] ?? '' })
       }
     }
-  }, [])
+    addPendingAttachments(imgs, files)
+  }, [addPendingAttachments])
 
   const handleSend = useCallback(() => {
     if (isLoading) {
@@ -60,21 +56,22 @@ export default function InputBar() {
       return
     }
     const trimmed = text.trim()
-    if (!trimmed && images.length === 0 && files.length === 0) return
+    if (!trimmed && pendingImages.length === 0 && pendingFiles.length === 0) return
 
     const { addMessage, startLoading, appendStreamText, appendStreamThinking, addStreamToolCall, addStreamToolResult, addStreamApproval, finishStreaming } = useChatStore.getState()
 
-    const userMsg = {
+    const images = useUIStore.getState().pendingImages
+    const files = useUIStore.getState().pendingFiles
+
+    addMessage({
       role: 'user' as const,
       content: trimmed || (images.length > 0 ? '[image]' : '[file]'),
       timestamp: new Date().toISOString(),
       images: images.length > 0 ? images : undefined,
       files: files.length > 0 ? files : undefined,
-    }
-    addMessage(userMsg)
+    })
     setText('')
-    setImages([])
-    setFiles([])
+    clearAttachments()
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
 
     const controller = new AbortController()
@@ -140,7 +137,7 @@ export default function InputBar() {
         }
         finishStreaming(activeSession)
       })
-  }, [text, isLoading, activeSession, cancelStream])
+  }, [text, isLoading, activeSession, cancelStream, pendingImages.length, pendingFiles.length, clearAttachments])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -156,50 +153,43 @@ export default function InputBar() {
     el.style.height = Math.min(el.scrollHeight, 150) + 'px'
   }
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files)
-  }, [handleFiles])
+  const hasAttachments = pendingImages.length > 0 || pendingFiles.length > 0
 
   return (
     <div className="px-4 pb-4 pt-2">
       {/* Attachment previews */}
-      {(images.length > 0 || files.length > 0) && (
+      {hasAttachments && (
         <div className="flex flex-wrap gap-2 mb-2">
-          {images.map((img, i) => (
+          {pendingImages.map((img, i) => (
             <div key={i} className="relative group">
               <img src={img.dataUrl} alt={img.name} className="h-16 w-16 object-cover rounded-md border border-border" />
               <button
-                onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
-                className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-error text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={() => removeImage(i)}
+                className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-error text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
               >×</button>
             </div>
           ))}
-          {files.map((f, i) => (
+          {pendingFiles.map((f, i) => (
             <div key={i} className="relative group flex items-center gap-1.5 bg-surface border border-border rounded-md px-2 py-1">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-tertiary"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-tertiary flex-shrink-0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               <span className="text-xs text-text-secondary max-w-[120px] truncate">{f.name}</span>
               <button
-                onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
-                className="text-text-tertiary hover:text-error transition-colors ml-1"
+                onClick={() => removeFile(i)}
+                className="text-text-tertiary hover:text-error transition-colors ml-1 cursor-pointer"
               >×</button>
             </div>
           ))}
         </div>
       )}
 
-      <div
-        className="flex items-end gap-3 bg-surface border border-border rounded-lg px-3 py-3 focus-within:border-border-hi transition-colors"
-        onDrop={handleDrop}
-        onDragOver={(e) => e.preventDefault()}
-      >
+      <div className="flex items-end gap-2 bg-surface border border-border rounded-lg px-3 py-3 focus-within:border-border-hi transition-colors">
         {/* Attachment button */}
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="flex-shrink-0 text-text-tertiary hover:text-text-secondary transition-colors mb-0.5"
+          className="flex-shrink-0 mb-0.5 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-white/5 transition-colors cursor-pointer"
           title="Attach file or image"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
           </svg>
         </button>
@@ -221,12 +211,13 @@ export default function InputBar() {
           rows={1}
           className="flex-1 bg-transparent text-text-primary text-sm outline-none resize-none max-h-[150px] leading-relaxed placeholder:text-text-tertiary"
         />
+
         <button
           onClick={handleSend}
-          className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center transition-colors ${
+          className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center transition-colors cursor-pointer ${
             isLoading
-              ? 'bg-error text-white'
-              : 'bg-accent text-white hover:brightness-110'
+              ? 'bg-error text-white hover:bg-red-500'
+              : 'bg-accent text-white hover:bg-violet-500'
           }`}
           title={isLoading ? 'Cancel' : 'Send'}
         >

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { PanelType, OverlayType } from '../types'
+import type { PanelType, OverlayType, MessageImage, MessageFile } from '../types'
 
 interface UIStore {
   leftNavCollapsed: boolean
@@ -17,6 +17,13 @@ interface UIStore {
 
   activeView: 'chat' | 'services'
   setActiveView: (view: 'chat' | 'services') => void
+
+  pendingImages: MessageImage[]
+  pendingFiles: MessageFile[]
+  addPendingAttachments: (images: MessageImage[], files: MessageFile[]) => void
+  removeImage: (i: number) => void
+  removeFile: (i: number) => void
+  clearAttachments: () => void
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -37,4 +44,12 @@ export const useUIStore = create<UIStore>((set) => ({
 
   activeView: 'chat',
   setActiveView: (view) => set({ activeView: view }),
+
+  pendingImages: [],
+  pendingFiles: [],
+  addPendingAttachments: (images, files) =>
+    set((s) => ({ pendingImages: [...s.pendingImages, ...images], pendingFiles: [...s.pendingFiles, ...files] })),
+  removeImage: (i) => set((s) => ({ pendingImages: s.pendingImages.filter((_, j) => j !== i) })),
+  removeFile: (i) => set((s) => ({ pendingFiles: s.pendingFiles.filter((_, j) => j !== i) })),
+  clearAttachments: () => set({ pendingImages: [], pendingFiles: [] }),
 }))
