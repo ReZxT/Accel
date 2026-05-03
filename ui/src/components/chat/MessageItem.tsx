@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import type { Message } from '../../types'
 import { formatMarkdown, formatTimestamp } from '../../lib/format'
+import { useUIStore } from '../../stores/uiStore'
 import ThinkingBlock from './blocks/ThinkingBlock'
 import Tooltip from '../ui/Tooltip'
 
@@ -10,6 +11,7 @@ interface Props {
 
 export default function MessageItem({ message }: Props) {
   const [copied, setCopied] = useState(false)
+  const openLightbox = useUIStore((s) => s.openLightbox)
   const isUser = message.role === 'user'
 
   const handleCopy = useCallback(() => {
@@ -37,7 +39,13 @@ export default function MessageItem({ message }: Props) {
           {(message.images?.length || message.files?.length) ? (
             <div className="flex flex-wrap gap-2 mb-2">
               {message.images?.map((img, i) => (
-                <img key={i} src={img.dataUrl} alt={img.name} className="h-24 max-w-[200px] object-cover rounded-md border border-border" />
+                <img
+                  key={i}
+                  src={img.dataUrl}
+                  alt={img.name}
+                  className="h-24 max-w-[200px] object-cover rounded-md border border-border cursor-pointer hover:opacity-80 transition-opacity"
+                  onClick={() => img.dataUrl && openLightbox(img.dataUrl)}
+                />
               ))}
               {message.files?.map((f, i) => (
                 <div key={i} className="flex items-center gap-1.5 bg-surface border border-border rounded-md px-2 py-1">

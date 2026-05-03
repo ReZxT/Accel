@@ -19,6 +19,10 @@ interface UIStore {
   activeView: 'chat' | 'services'
   setActiveView: (view: 'chat' | 'services') => void
 
+  lightboxSrc: string | null
+  openLightbox: (src: string) => void
+  closeLightbox: () => void
+
   pendingImages: MessageImage[]
   pendingFiles: MessageFile[]
   addPendingAttachments: (images: MessageImage[], files: MessageFile[]) => void
@@ -45,6 +49,10 @@ export const useUIStore = create<UIStore>((set) => ({
 
   activeView: 'chat',
   setActiveView: (view) => set({ activeView: view }),
+
+  lightboxSrc: null,
+  openLightbox: (src) => set({ lightboxSrc: src }),
+  closeLightbox: () => set({ lightboxSrc: null }),
 
   pendingImages: [],
   pendingFiles: [],

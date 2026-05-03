@@ -30,6 +30,7 @@ export interface ServiceStatus {
   uptime?: number
   accelerator?: 'gpu' | 'cpu'
   ports?: number[]
+  modelName?: string
 }
 
 export interface AccelConfig {

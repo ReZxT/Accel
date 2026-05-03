@@ -65,7 +65,7 @@ All models at `/mnt/WD/Models/`.
 **Active:**
 - **Chat:** `Qwen3.5-9B-Q6_K.gguf` — clean base, 65K ctx, GPU (ngl=99), `--jinja`, turbo4 KV cache (~544 MB vs ~2 GB f16), mmproj vision, ubatch-size 256. Binary: `llama-cpp-turboquant`. ~40 t/s.
 - **Embeddings:** `bge-m3-q8_0.gguf` — CPU, 1024-dim (locked in; swapping requires re-embedding all collections)
-- **Curator:** `Qwen3.5-0.8B-Q8_0.gguf` — GPU (ngl=99), port 8082, ~163 t/s. Uses raw `/completion` endpoint with `<think>\n</think>\n` injection (thinking_budget_tokens=0 broken in this model). Handles preflight routing + episode compression.
+- **Curator:** `Qwen3.5-0.8B-Q8_0.gguf` — GPU (ngl=99), port 8082, ~163 t/s. Uses raw `/completion` endpoint with `<think>\n</think>\n` injection (thinking_budget_tokens=0 broken in this model). Handles episode compression only. Pre-flight (personality + thinking depth) is currently disabled — personality defaults to "Casual", thinking budget is fixed 16384.
 - **Qwen Mini:** `Qwen3.5-0.8B-Q8_0.gguf` — CPU Docker, port 8083 (backup, unused while curator runs natively)
 
 **Previously used / available:**
@@ -86,11 +86,12 @@ All models at `/mnt/WD/Models/`.
 **Structure:**
 ```
 bootstrap/
-├── api/            # /chat (SSE), /approve, /settings/tools, /voice, /embeddings
+├── api/            # /chat (SSE), /approve, /models, /command, /voice, /embeddings
 ├── agents/         # chat_agent.py, preprocessed_agent.py
-├── tools/          # ~37 tools
+├── models/         # registry.py (ModelDef, ModelRegistry), backends.py (llama_cpp, openai, anthropic)
+├── tools/          # ~50 tools
 ├── memory/         # Qdrant clients: facts, episodes, sessions, sources, notes, profile, extraction
-├── curator/        # preflight.py — personality + thinking depth
+├── curator/        # preflight.py (disabled), episode compression
 ├── voice/          # pipeline.py, stt.py, tts.py, listener.py, filter.py, models/
 ├── config.py
 └── main.py         # uvicorn, port 8100
@@ -101,14 +102,52 @@ bootstrap/
 - *System:* `bash`, `search_files`, `list_dir`
 - *Web:* `search_web`, `fetch_url`, `screenshot_url`
 - *Compute:* `calculate`, `convert_units`, `convert_currency`
-- *Calendar:* `calendar_today`, `calendar_get_events`, `calendar_add_event`, `calendar_delete_event`
-- *Memory/KB:* `search_knowledge_base`, `list_knowledge_base`, `search_notes`, `list_notes`, `ingest_note`, `ingest_file`, `delete_source`, `delete_note`, `search_facts`, `search_procedures`, `search_episodes`, `save_memory`, `update_memory`, `delete_memory`
-- *Music:* `search_music`, `download_music`, `navidrome_search`, `navidrome_get_playlists`, `navidrome_get_playlist`, `navidrome_create_playlist`, `navidrome_update_playlist`, `navidrome_delete_playlist`, `player_control`, `player_now_playing`, `player_load`, `soundcloud_get_playlists`, `soundcloud_get_playlist`
+- *Calendar:* `calendar_today`, `calendar_get_events`, `calendar_add_event`, `calendar_delete_event` (idempotent: title+date+time dedup)
+- *Memory/KB:* `search_knowledge_base`, `list_knowledge_base`, `search_notes`, `list_notes`, `ingest_note`, `ingest_file`, `delete_source`, `delete_note`, `search_facts`, `search_procedures`, `search_episodes`, `save_memory`, `update_memory`, `delete_memory` (content-hash dedup on writes)
+- *Music:* `search_music`, `download_music`, `navidrome_search`, `navidrome_get_playlists`, `navidrome_get_playlist`, `navidrome_create_playlist`, `navidrome_update_playlist`, `navidrome_delete_playlist`, `player_control`, `player_now_playing`, `player_load`, `soundcloud_get_playlists`, `soundcloud_get_playlist` (playlist creation has name-match dedup)
 - *Media:* `search_audiobooks`, `add_torrent`
+- *Canvas:* `canvas_draw`, `canvas_clear`, `canvas_get_state`, `canvas_screenshot`
 
 **Irreversible (require approval):** `bash`, `write_file`, `edit_file`, `delete_file`, `move_file`, `ingest_file`, `ingest_note`, `add_torrent`, `download_music`, `navidrome_create_playlist`, `navidrome_update_playlist`, `navidrome_delete_playlist`, `calendar_add_event`, `calendar_delete_event`, `delete_source`, `delete_note`, `save_memory`, `update_memory`, `delete_memory`
 
 **Tool approval flow:** agentic loop yields `approval_request` SSE event → UI shows inline approve/deny. Each tool has `irreversible` flag; policy overridable per-tool in settings UI.
+
+## Model Swapping
+
+`models/registry.py` — pluggable model definitions with runtime switching. Three roles: chat, curator, embeddings — each independently swappable.
+
+### Built-in models
+| ID | Provider | Notes |
+|---|---|---|
+| `qwen-9b` | llama_cpp (local GPU) | Default chat. 65K ctx, vision, thinking. Endpoint from `CHAT_URL` env. |
+| `qwen-0.8b` | llama_cpp (local GPU) | Default curator. 8K ctx, episode compression. Endpoint from `CURATOR_URL` env. |
+| `bge-m3` | llama_cpp (local CPU) | Default embeddings. 1024-dim. Endpoint from `EMBED_URL` env. |
+| `gpt-4o` | openai | Needs `OPENAI_API_KEY` env var. 128K ctx, vision, no thinking. |
+| `gpt-4.1` | openai | Needs `OPENAI_API_KEY`. 1M ctx, vision. |
+| `claude-sonnet` | anthropic | Needs `ANTHROPIC_API_KEY`. 200K ctx, vision, extended thinking. |
+
+### Switching models
+- **Env vars:** `CHAT_MODEL_ID=gpt-4o`, `CURATOR_MODEL_ID=...`, `EMBED_MODEL_ID=...`
+- **Custom models:** `CUSTOM_MODELS='[{"id":"my-model","name":"Custom","provider":"llama_cpp","model_name":"...","endpoint":"http://...","context_window":32768}]'`
+- **API:** `PUT /models/active {"role":"chat","model_id":"gpt-4o"}` or `GET /models` to list
+- **UI:** Settings → Model selector, or type `/model gpt-4o` in chat
+- **Per-session override:** `model_id` in ChatRequest SSE payload — sets model for that session only
+
+### Backend dispatch (`models/backends.py`)
+- `llama_cpp` / `openai` → OpenAI-compatible `/v1/chat/completions`
+- `anthropic` → Messages API with format conversion (system prompt extraction, content block mapping, SSE event translation for streaming)
+- Embeddings → OpenAI-compatible `/embeddings`
+- All existing `from tools.llm import chat_complete, curator_complete, embed` imports unchanged — re-export layer preserves backward compat
+
+## Routing
+
+**Tier 0** (`router/tier0.py`, regex, <1ms): catches greetings, acknowledgments, farewells, bare URLs, memory commands ("remember X", "forget X"), short casual inputs (≤15 chars). Matched intents get canned responses (zero inference) or optimized pipeline flags (skip preflight, skip retrieval, force personality).
+
+**Tier 1** (`router/classifier.py`, heuristic, no LLM): routes by content type — `direct_chat` (chat), `preprocessed_text` (code/logs/chat_dump → tree-sitter/log-aware splitting), `multimodal` (image preprocessing + optional retrieval + vision model).
+
+Circuit breakers wrap all 8 external service domains (Qdrant, splitter, chat_model, curator, embeddings, searxng, playwright, navidrome) with configurable failure thresholds and domain-specific fallbacks.
+
+Stall detection fingerprints tool calls and response text (sliding window of 3). Nudges model on first repeat, force-stops on second.
 
 ## Memory Architecture
 
@@ -122,11 +161,11 @@ bootstrap/
 - **L4** Procedural memory → `procedures` (interaction patterns; Procedure Extractor runs post-response)
 - **L5** User profile → `user_profile.json` (always injected; `context_state`: work/study/free)
 
-**Retrieval:** embed query → search at threshold → rerank `0.7×semantic + 0.3×recency` (decay 1/(1+days×0.05)) → top N. Facts threshold 0.55, sources 0.65.
+**Retrieval:** hybrid (dense + BM25 sparse via RRF fusion). Reranked `0.7×semantic + 0.3×recency` (decay 1/(1+days×0.05)). Facts threshold 0.55, sources 0.65. Auto-retrieval currently disabled — model uses search_* tools on demand instead of having results injected into system prompt.
 
-**Personalities:** Teacher, Coder, Philosopher, Casual, Critic, Mentor — pre-flight curator decides based on context_state + last 2-3 turns.
+**Personalities:** Teacher, Coder, Philosopher, Casual, Critic, Mentor. Currently defaults to "Casual" — tier0 can force a personality for specific intents (e.g., "Coder" for code inputs). Pre-flight curator disabled; personality selection may be re-enabled later.
 
-**Thinking:** `enable_thinking` driven by pre-flight depth. `thinkingDepth=none` → false only (no hard suppression — causes empty output). `reasoning_content` captured; "Thinking Process:" blocks stripped in extract.
+**Thinking:** hardcoded `thinking_budget_tokens: 16384` (deep) for all turns. `reasoning_content` captured from chat-completion delta; `<think>` block content extracted from DIMOE-style text. "Thinking Process:" blocks stripped in extraction.
 
 **Obsidian vault:** `notes/` symlink → `/mnt/WD/The Ideas/`. POST `/ingest/vault` to re-index. Chunking uses heading + paragraph-aware splitter.
 
@@ -214,7 +253,7 @@ Design authority: `notes/` (Obsidian vault). Read when context is needed — the
 - Host ROCm: 6.3.1 — prebuilt tarballs for ROCm 7.x will NOT work; must build from source
 - Current binary: b8780 (latest: b8994 as of 2026-05-01)
 - Always use `--jinja` flag (embedded chat template)
-- Embeddings/curator run in Docker to avoid VRAM usage even at `-ngl 0`
+- Embeddings runs in Docker to avoid VRAM usage even at `-ngl 0`. Curator runs natively on GPU (ngl=99, port 8082).
 - Rebuild: `cmake --build build --config Release -j$(nproc)` then `sudo cp build/bin/llama-server /usr/local/bin/llama-server` (stop chat model first)
 
 ## n8n API (reference only)
@@ -227,9 +266,10 @@ Design authority: `notes/` (Obsidian vault). Read when context is needed — the
 
 - Local-first, no cloud inference
 - **Bootstrap (custom FastAPI + agentic loop) replaced n8n** — custom loop, no smolagents
-- llama.cpp for all inference (ROCm GPU chat, CPU embeddings/curator)
+- **Swappable model registry** — `models/registry.py` with `ModelDef` per provider (llama_cpp, openai, anthropic). Runtime switching via env, API, or UI. Per-session model override supported.
+- llama.cpp for local inference (ROCm GPU chat + curator, CPU embeddings); cloud API fallback for complex tasks
 - Qdrant for all vector storage; bge-m3 locked in at 1024-dim (re-embedding cost is high)
-- Separate model roles: chat (GPU, high ctx), curator (CPU, small ctx), embeddings (CPU)
+- Separate model roles: chat (GPU, 65K ctx), curator (GPU, 8K ctx, 0.8B), embeddings (CPU)
 - Router classifies input before any processing — never embed blindly
 - Memory layers are separate concepts from input modalities
 - Reasoning/thinking visible and passed to the UI separately from the final answer

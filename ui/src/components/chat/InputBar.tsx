@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useUIStore } from '../../stores/uiStore'
+import { setActiveModel } from '../../api/models'
 
 export default function InputBar() {
   const [text, setText] = useState('')
@@ -67,9 +68,43 @@ export default function InputBar() {
       return
     }
     const trimmed = text.trim()
+
+    // Handle slash commands
+    if (trimmed.startsWith('/')) {
+      const parts = trimmed.split(/\s+/)
+      const cmd = parts[0].toLowerCase()
+      const arg = parts.slice(1).join(' ')
+
+      if (cmd === '/model') {
+        if (arg) {
+          setActiveModel('chat', arg).then(() => {
+            useChatStore.getState().setModelId(arg)
+            setText('')
+          }).catch(() => {})
+          return
+        }
+      }
+
+      // Unknown slash command — send to backend as a /command
+      if (cmd.startsWith('/')) {
+        setText('')
+        fetch('/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: trimmed }),
+        }).then(async (res) => {
+          const result = await res.json().catch(() => ({}))
+          if (result.type === 'model_switched') {
+            useChatStore.getState().setModelId(result.model_id)
+          }
+        }).catch(() => {})
+        return
+      }
+    }
+
     if (!trimmed && pendingImages.length === 0 && pendingFiles.length === 0) return
 
-    const { addMessage, startLoading, appendStreamText, appendStreamThinking, addStreamToolCall, addStreamToolResult, addStreamApproval, finishStreaming } = useChatStore.getState()
+    const { addMessage, startLoading, appendStreamText, appendStreamThinking, addStreamToolCall, addStreamToolResult, addStreamApproval, finishStreaming, modelId } = useChatStore.getState()
 
     const images = useUIStore.getState().pendingImages
     const files = useUIStore.getState().pendingFiles
@@ -89,7 +124,7 @@ export default function InputBar() {
     startLoading(controller)
 
     const messages = useChatStore.getState().messages
-    const payload = {
+    const payload: Record<string, unknown> = {
       chatInput: trimmed || (images.length > 0 ? 'What do you see?' : 'Describe this file.'),
       chatHistory: messages.slice(-60).map((m) =>
         m.role === 'bot' ? { ...m, role: 'assistant' } : m,
@@ -98,6 +133,7 @@ export default function InputBar() {
       images: images.map(({ base64, name, type }) => ({ base64, name, type })),
       files: files.map(({ content, name, language }) => ({ content, name, language })),
     }
+    if (modelId) payload.model_id = modelId
 
     fetch('/chat', {
       method: 'POST',
@@ -124,8 +160,13 @@ export default function InputBar() {
             if (raw === '[DONE]') break
             try {
               const chunk = JSON.parse(raw)
-              if (chunk.type === 'text') appendStreamText(chunk.text)
+              if (chunk.type === 'text' || chunk.type === 'text_delta') appendStreamText(chunk.text)
+              else if (chunk.type === 'text_replace') useChatStore.getState().replaceStreamText(chunk.text)
               else if (chunk.type === 'thinking') appendStreamThinking(chunk.text)
+              else if (chunk.type === 'model_info') {
+                // Update the store with the model actually used for this response
+                if (chunk.model_id) useChatStore.getState().setModelId(chunk.model_id)
+              }
               else if (chunk.type === 'tool_call') {
                 addStreamToolCall({ id: `tc_${Date.now()}`, tool: chunk.tool, args: chunk.args })
               } else if (chunk.type === 'tool_result') {

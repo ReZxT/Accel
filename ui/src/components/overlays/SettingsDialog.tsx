@@ -4,8 +4,10 @@ import { useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { getToolSettings, updateToolSettings } from '../../api/tools'
 import { toggleVoice, getVoiceStatus } from '../../api/voice'
+import { getModels, setActiveModel } from '../../api/models'
 import { isElectron } from '../../api/electron'
 import type { ToolPolicy } from '../../types'
+import type { ModelInfo } from '../../api/models'
 
 const TOOL_LABELS: Record<string, { desc: string; irreversible: boolean }> = {
   bash: { desc: 'Shell command execution', irreversible: true },
@@ -31,13 +33,21 @@ export default function SettingsDialog() {
   const closeOverlay = useUIStore((s) => s.closeOverlay)
   const clearChat = useChatStore((s) => s.clearChat)
   const activeSession = useSessionStore((s) => s.activeSession)
+  const modelId = useChatStore((s) => s.modelId)
+  const setModelId = useChatStore((s) => s.setModelId)
   const [toolSettings, setToolSettings] = useState<Record<string, ToolPolicy>>({})
   const [voiceEnabled, setVoiceEnabled] = useState(false)
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [activeChatModel, setActiveChatModel] = useState('')
 
   useEffect(() => {
     if (activeOverlay === 'settings') {
       getToolSettings().then(setToolSettings).catch(() => {})
       getVoiceStatus().then(setVoiceEnabled).catch(() => {})
+      getModels().then((s) => {
+        setModels(s.available)
+        setActiveChatModel(s.chat_model_id)
+      }).catch(() => {})
     }
   }, [activeOverlay])
 
@@ -53,6 +63,14 @@ export default function SettingsDialog() {
     const next = !voiceEnabled
     setVoiceEnabled(next)
     toggleVoice(next).then(setVoiceEnabled).catch(() => setVoiceEnabled(!next))
+  }
+
+  const handleModelChange = (id: string) => {
+    setActiveModel('chat', id).then(() => {
+      setActiveChatModel(id)
+      if (id === modelId) setModelId(null) // "default" — use registry default
+      else setModelId(id)
+    }).catch(() => {})
   }
 
   return (
@@ -86,6 +104,40 @@ export default function SettingsDialog() {
                 }`}
               />
             </button>
+          </div>
+
+          {/* Model selector */}
+          <div>
+            <h3 className="text-xs font-semibold text-text-tertiary uppercase tracking-wider mb-3">
+              Model
+            </h3>
+            <div className="space-y-1.5">
+              {models.length === 0 && (
+                <p className="text-xs text-text-tertiary">Loading models...</p>
+              )}
+              {models.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => handleModelChange(m.id)}
+                  disabled={m.id === activeChatModel}
+                  className={`w-full text-left px-3 py-2 rounded-md border text-xs transition-colors cursor-pointer ${
+                    m.id === activeChatModel
+                      ? 'border-accent bg-accent/10 text-accent'
+                      : 'border-border text-text-secondary hover:border-accent/50 hover:bg-surface-hover'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">{m.name}</span>
+                    <span className="text-text-tertiary font-mono text-[10px] uppercase">{m.provider.replace('_', ' ')}</span>
+                  </div>
+                  <div className="flex items-center gap-3 mt-0.5 text-text-tertiary">
+                    <span>{m.context_window >= 1000 ? `${(m.context_window / 1000).toFixed(0)}k ctx` : `${m.context_window} ctx`}</span>
+                    {m.supports_vision && <span>👁 vision</span>}
+                    {m.supports_thinking && <span>🧠 thinking</span>}
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Clear chat */}

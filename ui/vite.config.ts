@@ -40,6 +40,14 @@ export default defineConfig({
         target: 'http://localhost:8100',
         changeOrigin: true,
       },
+      '/calendar': {
+        target: 'http://localhost:8100',
+        changeOrigin: true,
+      },
+      '/career': {
+        target: 'http://localhost:8100',
+        changeOrigin: true,
+      },
       '/canvas': {
         target: 'http://localhost:8100',
         changeOrigin: true,
@@ -68,6 +76,11 @@ export default defineConfig({
         target: 'http://localhost:4533',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/navidrome/, ''),
+      },
+      '/prometheus': {
+        target: 'http://localhost:9090',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/prometheus/, ''),
       },
     },
   },

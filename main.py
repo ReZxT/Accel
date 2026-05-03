@@ -12,7 +12,13 @@ from api.voice import router as voice_router
 from api.music import router as music_router
 from api.canvas import router as canvas_router
 from api.notes import router as notes_router
-from config import config
+from api.calendar import router as calendar_router
+from api.career import router as career_router
+from api.models import router as models_router
+from config import config, init_models
+
+# Initialize model registry before any requests
+init_models()
 
 app = FastAPI(title="Bootstrap", version="0.1.0")
 
@@ -31,6 +37,9 @@ app.include_router(voice_router)
 app.include_router(music_router)
 app.include_router(canvas_router)
 app.include_router(notes_router)
+app.include_router(calendar_router)
+app.include_router(career_router)
+app.include_router(models_router)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host=config.host, port=config.port, reload=False)

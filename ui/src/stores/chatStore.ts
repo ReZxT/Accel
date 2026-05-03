@@ -16,15 +16,18 @@ interface ChatStore {
   streamingResults: StreamingToolResult[]
   streamingApprovals: StreamingApproval[]
   abortController: AbortController | null
+  modelId: string | null
 
   setMessages: (messages: Message[]) => void
   addMessage: (message: Message) => void
   appendStreamText: (text: string) => void
+  replaceStreamText: (text: string) => void
   appendStreamThinking: (text: string) => void
   addStreamToolCall: (tc: StreamingToolCall) => void
   addStreamToolResult: (tr: StreamingToolResult) => void
   addStreamApproval: (a: StreamingApproval) => void
   resolveApproval: (requestId: string, approved: boolean) => void
+  setModelId: (id: string | null) => void
 
   startLoading: (controller: AbortController) => void
   finishStreaming: (sessionId: string) => void
@@ -43,6 +46,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   streamingResults: [],
   streamingApprovals: [],
   abortController: null,
+  modelId: null,
 
   setMessages: (messages) => set({ messages }),
   addMessage: (message) =>
@@ -50,6 +54,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   appendStreamText: (text) =>
     set((s) => ({ streamingText: s.streamingText + text })),
+  replaceStreamText: (text) =>
+    set({ streamingText: text }),
   appendStreamThinking: (text) =>
     set((s) => ({ streamingThinking: s.streamingThinking + text })),
   addStreamToolCall: (tc) =>
@@ -64,6 +70,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         a.request_id === requestId ? { ...a, resolved: true, approved } : a,
       ),
     })),
+  setModelId: (id) => set({ modelId: id }),
 
   startLoading: (controller) =>
     set({

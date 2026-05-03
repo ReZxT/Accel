@@ -4,12 +4,12 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    # Inference endpoints
+    # Inference endpoints (kept for backward compat — registry is the authority now)
     chat_url: str = os.getenv("CHAT_URL", "http://localhost:8080/v1")
     curator_url: str = os.getenv("CURATOR_URL", "http://localhost:8082/v1")
     embed_url: str = os.getenv("EMBED_URL", "http://localhost:8081/v1")
 
-    # Model names (as llama.cpp reports them)
+    # Model names (legacy — .models.registry is the authority now)
     chat_model: str = os.getenv("CHAT_MODEL", "accel")
     curator_model: str = os.getenv("CURATOR_MODEL", "curator")
     embed_model: str = os.getenv("EMBED_MODEL", "embed")
@@ -33,3 +33,13 @@ class Config:
 
 
 config = Config()
+
+
+def init_models():
+    """Load model registry from defaults + env overrides.
+
+    Called once at startup in main.py. Must be called after config is created
+    so the registry can pick up env vars.
+    """
+    from models.registry import registry
+    registry.load_defaults()

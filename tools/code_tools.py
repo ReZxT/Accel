@@ -15,6 +15,12 @@ from tools.navidrome_tools import (
     player_control, player_now_playing, player_load,
     soundcloud_get_playlists, soundcloud_get_playlist,
 )
+from tools.career_tools import (
+    career_get_profile, career_update_profile, career_save_offer,
+    career_list_offers, career_get_offer, career_rate_offer,
+    career_delete_offer, career_tierlist, career_compare,
+    career_fetch_jobs,
+)
 
 WORKSPACE_ROOT = os.getenv("WORKSPACE_ROOT", str(Path.home()))
 MAX_OUTPUT = 10_000  # chars
@@ -463,7 +469,7 @@ async def ingest_file(path: str = "", file_path: str = "", filepath: str = "", t
             return f"Ingest failed: {status.get('error', 'unknown error')}"
 
 
-from tools.web_tools import search_web, fetch_url, screenshot_url, search_knowledge_base, list_knowledge_base, search_notes, list_notes, search_audiobooks, save_memory, update_memory, delete_memory, search_facts, search_procedures, search_episodes, download_file, delete_source, delete_note
+from tools.web_tools import search_web, fetch_url, screenshot_url, search_knowledge_base, list_knowledge_base, search_notes, list_notes, search_audiobooks, save_memory, update_memory, delete_memory, search_facts, search_procedures, search_episodes, download_file, delete_source, delete_note, list_collections, search_collection
 from tools.calculator import calculate
 from tools.calendar_tools import calendar_add_event, calendar_get_events, calendar_delete_event, calendar_today
 from tools.converter import convert_units, convert_currency
@@ -481,7 +487,8 @@ TOOL_REGISTRY = {
     "search_web": search_web,
     "search_audiobooks": search_audiobooks,
     "fetch_url": fetch_url,
-    "search_knowledge_base": search_knowledge_base,
+    "list_collections": list_collections,
+    "search_collection": search_collection,
     "list_knowledge_base": list_knowledge_base,
     "search_notes": search_notes,
     "list_notes": list_notes,
@@ -524,10 +531,20 @@ TOOL_REGISTRY = {
     "calendar_today": calendar_today,
     "convert_units": convert_units,
     "convert_currency": convert_currency,
+    "career_get_profile": career_get_profile,
+    "career_update_profile": career_update_profile,
+    "career_save_offer": career_save_offer,
+    "career_list_offers": career_list_offers,
+    "career_get_offer": career_get_offer,
+    "career_rate_offer": career_rate_offer,
+    "career_delete_offer": career_delete_offer,
+    "career_tierlist": career_tierlist,
+    "career_compare": career_compare,
+    "career_fetch_jobs": career_fetch_jobs,
 }
 
 # irreversible by default — user can override in tool_settings
-IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file", "delete_file", "move_file", "ingest_file", "ingest_note", "add_torrent", "download_music", "calendar_add_event", "calendar_delete_event", "delete_source", "delete_note", "delete_memory", "navidrome_create_playlist", "navidrome_update_playlist", "navidrome_delete_playlist"}
+IRREVERSIBLE_TOOLS = {"bash", "write_file", "edit_file", "delete_file", "move_file", "ingest_file", "ingest_note", "add_torrent", "download_music", "calendar_add_event", "calendar_delete_event", "delete_source", "delete_note", "delete_memory", "navidrome_create_playlist", "navidrome_update_playlist", "navidrome_delete_playlist", "career_update_profile", "career_save_offer", "career_rate_offer", "career_delete_offer", "career_fetch_jobs"}
 
 
 _session_tools_used: dict[str, set[str]] = {}

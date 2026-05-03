@@ -5,6 +5,8 @@ import MusicPanel from '../panels/MusicPanel'
 import CanvasPanel from '../panels/CanvasPanel'
 import NotesPanel from '../panels/NotesPanel'
 import FilePanel from '../panels/FilePanel'
+import CalendarPanel from '../panels/CalendarPanel'
+import CareerPanel from '../panels/CareerPanel'
 import Tooltip from '../ui/Tooltip'
 
 const TABS: { mode: PanelMode; label: string; icon: React.ReactNode }[] = [
@@ -44,6 +46,24 @@ const TABS: { mode: PanelMode; label: string; icon: React.ReactNode }[] = [
       </svg>
     ),
   },
+  {
+    mode: 'calendar' as const,
+    label: 'Calendar',
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+      </svg>
+    ),
+  },
+  {
+    mode: 'career' as const,
+    label: 'Career',
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="7" width="20" height="14" rx="2" ry="2" /><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+      </svg>
+    ),
+  },
 ]
 
 export default function RightPanel() {
@@ -69,6 +89,9 @@ export default function RightPanel() {
       case 'canvas': return <CanvasPanel />
       case 'notes': return <NotesPanel path={panelPayload?.path} />
       case 'file': return <FilePanel path={panelPayload?.path} content={panelPayload?.content} />
+      case 'calendar': return <CalendarPanel />
+      case 'career': return <CareerPanel />
+      default: return null
     }
   }
 

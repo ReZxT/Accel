@@ -40,19 +40,9 @@ calendar_get_events — Get events and holidays for a date or range.
 calendar_add_event — Add a calendar event.
 calendar_delete_event — Delete a calendar event by ID.
 
-search_knowledge_base — Semantically search ingested books and documents.
-list_knowledge_base — List all documents in the knowledge base.
-ingest_file — Ingest a local document into the knowledge base.
-delete_source — Delete a document from the knowledge base by exact title.
+list_collections — List all searchable memory collections (sources, notes, facts, procedures, episodes) with descriptions.
+search_collection — Semantically search a specific memory collection by name. Use list_collections first to see available names.
 
-search_notes — Semantically search Obsidian vault notes.
-list_notes — List all indexed notes.
-ingest_note — Ingest or re-ingest a markdown file into the notes collection.
-delete_note — Delete a note from the notes collection by exact title.
-
-search_facts — Search stored facts about the user from memory.
-search_procedures — Search stored interaction patterns from memory.
-search_episodes — Search episodic memory for past conversation summaries.
 save_memory — Save information directly to memory (facts/procedures/episodes).
 update_memory — Replace an existing memory entry with updated text.
 delete_memory — Delete an exact memory entry.
@@ -79,10 +69,22 @@ canvas_clear — Clear everything from the canvas.
 canvas_get_state — Read all shapes on the canvas as text (type, position, label, color).
 canvas_screenshot — Capture the canvas as an image to visually inspect what's drawn.
 
+career_get_profile — Read the user's career profile (skills, experience, targets).
+career_update_profile — Update career profile fields. Requires approval.
+career_save_offer — Save a job offer to the database. Requires approval.
+career_list_offers — List saved offers, filterable by status/rating/tier.
+career_get_offer — Get full details of a saved offer.
+career_rate_offer — Rate an offer 0-100 and update notes/status. Requires approval.
+career_delete_offer — Delete a saved offer. Requires approval.
+career_tierlist — Show all rated offers organized by tier (S/A/B/C/D).
+career_compare — Compare career profile against a specific offer for fit analysis.
+career_fetch_jobs — Fetch job offers from nofluffjobs.com with filters. Set save=true to auto-save new offers. Requires approval.
+
 Media folders: /mnt/WD/Books/ | /mnt/WD/Audiobooks/ | /mnt/WD/Documents/ | /mnt/WD/Music/
 
 After each tool call you will receive a <tool_result> block. Use it to inform your next step.
 Do not emit multiple tool calls at once unless they are fully independent.
+NEVER paste raw URLs as your answer — always use fetch_url or search_web to retrieve content, then summarize the results.
 """
 
 TOOL_DETAILS = {
@@ -171,11 +173,13 @@ TOOL_DETAILS = {
     "calendar_delete_event": """calendar_delete_event — Delete a calendar event. Requires approval.
   event_id (integer, required): ID from calendar_get_events output""",
 
-    "search_knowledge_base": """search_knowledge_base — Semantically search ingested books and documents (PDFs, EPUBs, papers). Use before searching the web for topics that may be in the library.
+    "list_collections": """list_collections — List all searchable memory collections with descriptions. No parameters.
+  Collections: sources (knowledge base), notes (Obsidian vault), facts (about you), procedures (interaction patterns), episodes (past conversations)""",
+
+    "search_collection": """search_collection — Semantically search a specific memory collection.
+  collection (string, required): Collection name — use list_collections to see available names (sources, notes, facts, procedures, episodes)
   query (string, required): What to search for
   top_k (integer, optional): Number of results (default 5)""",
-
-    "list_knowledge_base": """list_knowledge_base — List all books and documents currently ingested in the knowledge base. No parameters.""",
 
     "ingest_file": """ingest_file — Ingest a local document into the knowledge base (Qdrant sources). Supports PDF, EPUB, TXT, MD, RST. Requires approval.
   path (string, required): Path to the file (e.g. /mnt/WD/Books/book.pdf)
@@ -183,33 +187,15 @@ TOOL_DETAILS = {
   author (string, optional): Author name
   source_type (string, optional): book | document | paper | note (auto-detected from folder if omitted)""",
 
-    "delete_source": """delete_source — Delete a document and all its chunks from the knowledge base. Use list_knowledge_base first to confirm the exact title. Requires approval.
+    "delete_source": """delete_source — Delete a document and all its chunks from the knowledge base. Use list_collections or search_collection first to confirm the exact title. Requires approval.
   title (string, required): Exact title of the document to delete""",
-
-    "search_notes": """search_notes — Semantically search the Obsidian vault notes.
-  query (string, required): What to search for
-  top_k (integer, optional): Number of results (default 5)""",
-
-    "list_notes": """list_notes — List all notes currently indexed in the notes collection. No parameters.""",
 
     "ingest_note": """ingest_note — Ingest or re-ingest a local markdown file into the notes collection. Use after editing a note so the updated content is searchable. Requires approval.
   path (string, required): Path to the markdown file
   title (string, optional): Override the note title""",
 
-    "delete_note": """delete_note — Delete a note and all its chunks from the notes collection. Use list_notes first to confirm the exact title. Requires approval.
+    "delete_note": """delete_note — Delete a note and all its chunks from the notes collection. Use list_collections or search_collection first to confirm the exact title. Requires approval.
   title (string, required): Exact title of the note to delete""",
-
-    "search_facts": """search_facts — Search the facts memory collection for stored facts about the user (preferences, background, life details).
-  query (string, required): What to search for
-  top_k (integer, optional): Number of results (default 5)""",
-
-    "search_procedures": """search_procedures — Search the procedures memory collection for stored interaction patterns (how the user likes to work, communicate, or learn).
-  query (string, required): What to search for
-  top_k (integer, optional): Number of results (default 5)""",
-
-    "search_episodes": """search_episodes — Search episodic memory for summaries of past conversations. Useful for recalling what was discussed or decided in previous sessions.
-  query (string, required): What to search for
-  top_k (integer, optional): Number of results (default 5)""",
 
     "save_memory": """save_memory — Save a piece of information directly to memory, bypassing the curator. Deduplication is automatic. Requires approval.
   text (string, required): The information to save
@@ -303,6 +289,64 @@ Layout: left-to-right for sequences, top-to-bottom for hierarchies.""",
     "canvas_get_state": """canvas_get_state — Returns a text list of all shapes on the canvas (type, position, label, color, size). Use this to understand what's already drawn before adding more.""",
 
     "canvas_screenshot": """canvas_screenshot — Captures the current canvas as a PNG image and returns it for visual inspection. No parameters. Use after drawing to verify the result, or to read user-drawn content visually.""",
+
+    "career_get_profile": """career_get_profile — Read the user's career profile. No parameters.""",
+
+    "career_update_profile": """career_update_profile — Update career profile. Only include fields you want to change. Requires approval.
+  skills (string, optional): Comma-separated skills list
+  experience (string, optional): Work experience summary
+  education (string, optional): Education background
+  target_roles (string, optional): Roles the user is targeting
+  preferred_stack (string, optional): Preferred tech stack
+  location_preference (string, optional): Where the user wants to work
+  salary_expectation (string, optional): Expected salary range
+  languages (string, optional): Spoken languages
+  strengths (string, optional): Key strengths
+  notes (string, optional): Additional notes""",
+
+    "career_save_offer": """career_save_offer — Save a job offer. Use after fetching details from a job listing URL. Requires approval.
+  title (string, required): Job title
+  company (string, optional): Company name
+  url (string, optional): Original listing URL
+  description (string, optional): Job description summary
+  requirements (string, optional): Key requirements
+  salary (string, optional): Salary info
+  location (string, optional): Job location
+  remote (string, optional): Remote policy (remote/hybrid/onsite)
+  rating (integer, optional): Initial rating 0-100 (-1 for unrated)
+  notes (string, optional): Notes about this offer""",
+
+    "career_list_offers": """career_list_offers — List saved offers.
+  status (string, optional): Filter by status (new/applied/interview/rejected/accepted)
+  min_rating (integer, optional): Minimum rating filter
+  tier (string, optional): Filter by tier (S/A/B/C/D)""",
+
+    "career_get_offer": """career_get_offer — Get full details of a saved offer.
+  offer_id (integer, required): Offer ID""",
+
+    "career_rate_offer": """career_rate_offer — Rate or update an offer. Requires approval.
+  offer_id (integer, required): Offer ID
+  rating (integer, optional): Rating 0-100
+  notes (string, optional): Updated notes
+  status (string, optional): new/applied/interview/rejected/accepted""",
+
+    "career_delete_offer": """career_delete_offer — Delete a saved offer. Requires approval.
+  offer_id (integer, required): Offer ID""",
+
+    "career_tierlist": """career_tierlist — Show all rated offers organized by tier. No parameters.
+  Tiers: S (90-100), A (75-89), B (60-74), C (40-59), D (0-39)""",
+
+    "career_compare": """career_compare — Compare career profile against a specific offer. Returns both profile and offer data for analysis.
+  offer_id (integer, required): Offer ID to compare against""",
+
+    "career_fetch_jobs": """career_fetch_jobs — Fetch job offers from nofluffjobs.com. Deduplicates against already-saved URLs. Requires approval when save=true.
+  keywords (string, optional): Search keywords (e.g. "python", "react", "junior AI")
+  seniority (string, optional): junior | mid | senior
+  category (string, optional): backend | frontend | fullstack | testing | data | devops | mobile | pm | other
+  location (string, optional): City name (e.g. "Warszawa", "Kraków")
+  salary_min (integer, optional): Minimum salary filter
+  limit (integer, optional): Max results to fetch (default 20, max 50)
+  save (boolean, optional): If true, auto-save new offers to database (default false)""",
 }
 
 

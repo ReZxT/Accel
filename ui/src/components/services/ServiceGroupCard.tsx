@@ -52,6 +52,9 @@ export default function ServiceGroupCard({ group, services }: { group: ServiceGr
               <div className="flex items-center gap-2 flex-wrap">
                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${HEALTH_COLORS[s.health]}`} />
                 <span className="text-sm">{s.name}</span>
+                {s.modelName && (
+                  <span className="text-xs text-accent/80 font-mono">{s.modelName}</span>
+                )}
                 <span className="text-xs text-text-tertiary">{s.health}</span>
                 {s.accelerator === 'gpu' && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-400 font-medium">GPU</span>

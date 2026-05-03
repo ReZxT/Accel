@@ -1,10 +1,12 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useCallback } from 'react'
 import { useChatStore } from '../../stores/chatStore'
 import MessageItem from './MessageItem'
 import ToolCallBlock from './blocks/ToolCallBlock'
 import ToolResultBlock from './blocks/ToolResultBlock'
 import ApprovalBlock from './blocks/ApprovalBlock'
 import { formatMarkdown } from '../../lib/format'
+
+const INTERACTIVE = new Set(['BUTTON', 'A', 'INPUT', 'TEXTAREA', 'SELECT', 'IMG'])
 
 export default function MessageStream() {
   const messages = useChatStore((s) => s.messages)
@@ -20,6 +22,14 @@ export default function MessageStream() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingText, streamingTools, streamingResults, streamingApprovals])
 
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    const el = e.target as HTMLElement
+    if (INTERACTIVE.has(el.tagName)) return
+    if (window.getSelection()?.toString()) return
+    const textarea = document.querySelector<HTMLTextAreaElement>('textarea[placeholder]')
+    textarea?.focus()
+  }, [])
+
   if (messages.length === 0 && !isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -34,7 +44,7 @@ export default function MessageStream() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="flex-1 overflow-y-auto" onClick={handleClick}>
       {messages.map((msg, i) => (
         <MessageItem key={`${msg.timestamp}-${i}`} message={msg} />
       ))}
@@ -47,8 +57,8 @@ export default function MessageStream() {
             </div>
             <div className="min-w-0 flex-1">
               {streamingThinking && (
-                <div className="text-xs text-orange-400/80 italic border-l-2 border-orange-400/40 pl-2 mb-2">
-                  Thinking...
+                <div className="text-xs text-orange-400/80 border-l-2 border-orange-400/40 pl-2 mb-2 max-h-[200px] overflow-y-auto font-mono whitespace-pre-wrap leading-relaxed">
+                  {streamingThinking}
                 </div>
               )}
 

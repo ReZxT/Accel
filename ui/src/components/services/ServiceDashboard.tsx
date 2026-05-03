@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useServiceStore } from '../../stores/serviceStore'
 import { isElectron } from '../../api/electron'
 import ServiceGroupCard from './ServiceGroupCard'
+import MetricsPanel from './MetricsPanel'
 import type { ServiceGroupId } from '../../types'
 
 const GROUP_ORDER: ServiceGroupId[] = ['inference', 'core', 'memory', 'monitoring', 'media', 'dev']
@@ -28,14 +29,19 @@ export default function ServiceDashboard() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <h1 className="text-lg font-semibold mb-4">Services</h1>
-      <div className="space-y-3 max-w-2xl">
-        {GROUP_ORDER.map((group) => {
-          const services = grouped.get(group)
-          if (!services || services.length === 0) return null
-          return <ServiceGroupCard key={group} group={group} services={services} />
-        })}
+    <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 overflow-y-auto p-6">
+        <h1 className="text-lg font-semibold mb-4">Services</h1>
+        <div className="space-y-3 max-w-2xl">
+          {GROUP_ORDER.map((group) => {
+            const services = grouped.get(group)
+            if (!services || services.length === 0) return null
+            return <ServiceGroupCard key={group} group={group} services={services} />
+          })}
+        </div>
+      </div>
+      <div className="w-80 border-l border-border overflow-y-auto flex-shrink-0">
+        <MetricsPanel />
       </div>
     </div>
   )

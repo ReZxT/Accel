@@ -18,7 +18,7 @@ from memory.profile import get_profile, get_tool_settings
 from memory.sessions import load_session, save_session
 from memory.extraction import extract_after_response
 from memory.episodes import maybe_compress
-from curator.preflight import run_preflight, get_thinking_budget
+from curator.preflight import run_preflight  # kept for future re-enable
 from router.classifier import RouteDecision
 from router.tier0 import Tier0Result
 from tools.llm import chat_complete
@@ -27,6 +27,7 @@ from tools.tool_descriptions import TOOLS_SYSTEM_BLOCK
 from tools.code_tools import execute_tool, IRREVERSIBLE_TOOLS
 from tools import approval
 from config import config
+from models.registry import registry
 
 MAX_TOOL_ITERATIONS = 25
 TOOL_CONTINUE_BATCH = 25
@@ -119,6 +120,7 @@ async def _run_agentic_loop(
     session_id: str,
     tool_settings: dict,
     cancel: asyncio.Event | None = None,
+    model_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming agentic loop: call model, parse tool calls, execute, repeat."""
     nudged = False
@@ -135,8 +137,8 @@ async def _run_agentic_loop(
         response_text = ""
         thinking_text = ""
 
-        # stream model response — buffer text, stream thinking live
-        async for chunk in await chat_complete(messages, stream=True, **budget_kwargs):
+        # stream model response token-by-token
+        async for chunk in await chat_complete(messages, stream=True, model_id=model_id, **budget_kwargs):
             if cancel and cancel.is_set():
                 break
             choice = chunk.get("choices", [{}])[0]
@@ -146,14 +148,17 @@ async def _run_agentic_loop(
                 yield json.dumps({"type": "thinking", "text": delta["reasoning_content"]})
             if delta.get("content"):
                 response_text += delta["content"]
+                yield json.dumps({"type": "text_delta", "text": delta["content"]})
 
         if cancel and cancel.is_set():
             yield json.dumps({"type": "text", "text": "\n\n*(Cancelled.)*"})
             messages.append({"role": "assistant", "content": response_text or "(cancelled)"})
             break
 
-        # extract <think> blocks from content field (DIMOE sometimes puts thinking there)
+        # extract <think> blocks from content field (DIMOE / DeepSeek V4)
         think_blocks = re.findall(r"<think>([\s\S]*?)</think>", response_text, re.IGNORECASE)
+        # DeepSeek V4 non-think mode: leading </think> → strip it
+        response_text = re.sub(r"^\s*</think>\s*", "", response_text, flags=re.IGNORECASE)
         if think_blocks:
             extra_thinking = "\n".join(think_blocks).strip()
             response_text = re.sub(r"<think>[\s\S]*?</think>", "", response_text, flags=re.IGNORECASE).strip()
@@ -164,16 +169,15 @@ async def _run_agentic_loop(
         clean_text = strip_tool_calls(response_text) if tool_calls else response_text
 
         if not clean_text and not tool_calls and extra_thinking:
-            # Model put its entire response inside <think> — emit it as the answer so it's not lost
             thinking_text += extra_thinking
             yield json.dumps({"type": "text", "text": extra_thinking})
         else:
-            # Normal case: emit thinking separately, then clean text
             if extra_thinking:
                 thinking_text += extra_thinking
                 yield json.dumps({"type": "thinking", "text": extra_thinking})
-            if clean_text:
-                yield json.dumps({"type": "text", "text": clean_text})
+            if tool_calls and clean_text:
+                # Tool round: streamed tokens included XML — send cleaned version
+                yield json.dumps({"type": "text_replace", "text": clean_text})
 
         if not tool_calls:
             # model produced no text and no tool calls — nudge once then stop
@@ -356,10 +360,13 @@ async def run_chat(
     voice_mode: bool = False,
     cancel: asyncio.Event | None = None,
     tier0: Tier0Result | None = None,
+    model_id: str | None = None,
+    thinking_enabled: bool | None = None,
 ) -> AsyncGenerator[str, None]:
     req_t0 = time.monotonic()
-    log.info("run_chat: session=%s  voice=%s  tier0=%s  input=%.80s",
-             session_id, voice_mode, tier0.intent if tier0 else None, chat_input)
+    log.info("run_chat: session=%s  voice=%s  tier0=%s  model=%s  input=%.80s",
+             session_id, voice_mode, tier0.intent if tier0 else None,
+             model_id or "default", chat_input)
 
     if not chat_history:
         chat_history = await load_session(session_id)
@@ -370,31 +377,11 @@ async def run_chat(
     context_state = profile.get("context_state", "free")
     tool_settings = await get_tool_settings()
 
-    if tier0 and tier0.skip_preflight:
-        personality = tier0.force_personality or "Casual"
-        thinking_depth = tier0.force_thinking_depth or "light"
-        budget = get_thinking_budget(thinking_depth)
-        log.info("tier0 skip_preflight: personality=%s  depth=%s", personality, thinking_depth)
-    else:
-        preflight = await run_preflight(
-            recent_turns=chat_history[-3:],
-            current_personality=profile.get("current_personality", "Casual"),
-            context_state=context_state,
-        )
-        personality = preflight["personality"]
-        thinking_depth = preflight["thinking_depth"]
-        budget = get_thinking_budget(thinking_depth)
+    # Preflight disabled — model decides its own thinking depth
+    personality = tier0.force_personality if (tier0 and tier0.force_personality) else "Casual"
 
-    skip_retrieval = (tier0 and tier0.skip_retrieval) or (route and not route.use_retrieval)
-    if not skip_retrieval:
-        facts, procedures, sources, notes = await asyncio.gather(
-            search_facts(chat_input, top_k=5),
-            search_procedures(chat_input, top_k=4),
-            search_sources(chat_input, top_k=3),
-            search_notes(chat_input, top_k=3),
-        )
-    else:
-        facts, procedures, sources, notes = [], [], [], []
+    # Auto-retrieval disabled — model has search tools when it needs context
+    facts, procedures, sources, notes = [], [], [], []
 
     facts_text = "\n".join(f"- {f.get('text', '')}" for f in facts) or "None"
     proc_text = "\n".join(f"- {p.get('text', '')}" for p in procedures) or "None"
@@ -449,18 +436,51 @@ async def run_chat(
 
     loop_start = len(messages)  # index of first new turn added by the loop
 
-    budget_kwargs = {"extra_body": {"thinking_budget_tokens": budget if budget is not None else 0}}
+    # Determine active model for this response — used for thinking config + UI info
+    active_model = registry.get(model_id) if model_id else registry.chat
+    budget_kwargs: dict = {}
+    # Respect explicit thinking_enabled flag; otherwise use model default
+    use_thinking = thinking_enabled if thinking_enabled is not None else (active_model and active_model.supports_thinking)
+    if active_model and use_thinking:
+        if active_model.provider == "llama_cpp":
+            budget_kwargs = {"extra_body": {"thinking_budget_tokens": 16384}}
+        elif "deepseek" in active_model.id:
+            # DeepSeek V4: native thinking toggle + effort level
+            budget_kwargs = {
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "high",
+            }
+    elif active_model and "deepseek" in active_model.id and thinking_enabled is False:
+        # Explicitly disable thinking for DeepSeek
+        budget_kwargs = {"thinking": {"type": "disabled"}}
+
+    # Tell the UI which model is active for this response
+    if active_model:
+        yield json.dumps({"type": "model_info", "model_id": active_model.id, "model_name": active_model.name, "provider": active_model.provider})
 
     # agentic loop — accumulate final response text for extraction/display
     response_text = ""
     thinking_text = ""
+    tool_log: list[dict] = []
+    _current_tool: str | None = None
 
-    async for event_json in _run_agentic_loop(messages, budget_kwargs, session_id, tool_settings, cancel=cancel):
+    async for event_json in _run_agentic_loop(messages, budget_kwargs, session_id, tool_settings, cancel=cancel, model_id=model_id):
         event = json.loads(event_json)
-        if event["type"] == "text":
-            response_text += event["text"]
-        elif event["type"] == "thinking":
+        etype = event["type"]
+        if etype in ("text", "text_delta", "text_replace"):
+            if etype == "text_replace":
+                response_text = event["text"]
+            else:
+                response_text += event["text"]
+        elif etype == "thinking":
             thinking_text += event["text"]
+        elif etype == "tool_call":
+            _current_tool = event.get("tool", "")
+            tool_log.append({"tool": _current_tool, "args": event.get("args", {}), "result": ""})
+        elif etype == "tool_result" and tool_log:
+            tool_log[-1]["result"] = str(event.get("output", ""))[:200]
+        elif etype == "tool_denied" and tool_log:
+            tool_log[-1]["result"] = "[denied by user]"
         yield event_json
 
     # Build new history: prior turns + current user input + full loop exchange
@@ -477,12 +497,24 @@ async def run_chat(
             return {**turn, "content": stripped}
         return turn
 
-    # Only save the final assistant message — skip intermediate tool-call/result turns
-    # so server and client history stay the same length and pollSession doesn't misfire.
+    # Build condensed tool log so the model knows what it did in previous turns
+    saved_content = response_text
+    if tool_log:
+        lines = []
+        for entry in tool_log:
+            args_str = json.dumps(entry["args"], ensure_ascii=False)
+            if len(args_str) > 120:
+                args_str = args_str[:120] + "..."
+            result_str = entry["result"]
+            if len(result_str) > 150:
+                result_str = result_str[:150] + "..."
+            lines.append(f"- {entry['tool']}({args_str}) → {result_str}")
+        saved_content += "\n\n<tool_history>\n" + "\n".join(lines) + "\n</tool_history>"
+
     final_assistant = None
     for turn in reversed(messages[loop_start:]):
         if turn.get("role") == "assistant":
-            final_assistant = _strip_images({**turn, "content": response_text, "thoughts": thinking_text})
+            final_assistant = _strip_images({**turn, "content": saved_content, "thoughts": thinking_text})
             break
 
     new_history = chat_history + [{"role": "user", "content": chat_input}]

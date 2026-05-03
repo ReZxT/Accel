@@ -41,7 +41,7 @@ export interface ApprovalRequest {
   args: Record<string, unknown>
 }
 
-export type PanelMode = 'music' | 'canvas' | 'notes' | 'file'
+export type PanelMode = 'music' | 'canvas' | 'notes' | 'file' | 'calendar' | 'career'
 
 export interface OpenPanelPayload {
   path?: string      // for notes/file: vault-relative path to open
@@ -50,6 +50,9 @@ export interface OpenPanelPayload {
 
 export type SSEChunk =
   | { type: 'text'; text: string }
+  | { type: 'text_delta'; text: string }
+  | { type: 'text_replace'; text: string }
+  | { type: 'model_info'; model_id: string; model_name: string; provider: string }
   | { type: 'thinking'; text: string }
   | { type: 'tool_call'; tool: string; args: Record<string, unknown> }
   | { type: 'tool_result'; tool: string; output: string; image?: string; mime_type?: string }
@@ -82,7 +85,7 @@ export interface NowPlaying {
   art_url: string
 }
 
-export type SessionId = 'standard' | 'coding' | 'architecture' | 'study' | 'music'
+export type SessionId = 'standard' | 'coding' | 'architecture' | 'study' | 'music' | 'news' | 'career'
 
 export interface Session {
   id: SessionId
@@ -135,4 +138,5 @@ export interface ServiceStatus {
   uptime?: number
   accelerator?: 'gpu' | 'cpu'
   ports?: number[]
+  modelName?: string
 }

@@ -41,9 +41,13 @@ const PROXY_RULES: ProxyRule[] = [
   { prefix: '/chat',     target: 'http://localhost:8100' },
   { prefix: '/cancel',   target: 'http://localhost:8100' },
   { prefix: '/approve',  target: 'http://localhost:8100' },
+  { prefix: '/command',  target: 'http://localhost:8100' },
+  { prefix: '/models',   target: 'http://localhost:8100' },
   { prefix: '/settings', target: 'http://localhost:8100' },
   { prefix: '/voice',    target: 'http://localhost:8100' },
   { prefix: '/music',    target: 'http://localhost:8100' },
+  { prefix: '/calendar', target: 'http://localhost:8100' },
+  { prefix: '/career',   target: 'http://localhost:8100' },
   { prefix: '/canvas',   target: 'http://localhost:8100' },
   { prefix: '/notes',    target: 'http://localhost:8100' },
   { prefix: '/health',   target: 'http://localhost:8100' },
@@ -56,6 +60,11 @@ const PROXY_RULES: ProxyRule[] = [
     prefix: '/navidrome',
     target: 'http://localhost:4533',
     rewrite: (p) => p.replace(/^\/navidrome/, '') || '/',
+  },
+  {
+    prefix: '/prometheus',
+    target: 'http://localhost:9090',
+    rewrite: (p) => p.replace(/^\/prometheus/, '') || '/',
   },
 ]
 

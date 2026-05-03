@@ -7,6 +7,8 @@ const SESSIONS: Session[] = [
   { id: 'architecture', label: 'Architecture', icon: 'LayoutGrid' },
   { id: 'study', label: 'Study', icon: 'BookOpen' },
   { id: 'music', label: 'Music', icon: 'Music' },
+  { id: 'news', label: 'News', icon: 'Newspaper' },
+  { id: 'career', label: 'Career', icon: 'Briefcase' },
 ]
 
 interface SessionStore {

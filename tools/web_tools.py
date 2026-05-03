@@ -352,6 +352,102 @@ async def search_episodes(query: str, top_k: int = 5) -> str:
     return "\n".join(f"- {r.get('text', '')}" for r in results)
 
 
+COLLECTIONS_INFO = {
+    "sources": "Knowledge base: ingested books, documents, papers, and technical docs. Use for research topics, concepts, book content.",
+    "notes": "Obsidian vault notes: your personal notes, design documents, architecture decisions, project planning.",
+    "facts": "Facts memory: extracted facts about you — preferences, background, projects, hardware, life details.",
+    "procedures": "Procedural memory: learned interaction patterns — how you prefer explanations, your learning style.",
+    "episodes": "Episodic memory: compressed summaries of past conversations — what was discussed or decided.",
+}
+
+
+async def list_collections() -> str:
+    """List all searchable memory collections with descriptions."""
+    lines = ["Available searchable collections:"]
+    for name, desc in COLLECTIONS_INFO.items():
+        lines.append(f"- **{name}**: {desc}")
+    return "\n".join(lines)
+
+
+async def search_collection(collection: str, query: str, top_k: int = 5) -> str:
+    """Search a specific memory collection by name. Use list_collections first to see available names.
+    
+    Args:
+        collection: One of the collection names from list_collections (sources, notes, facts, procedures, episodes)
+        query: What to search for
+        top_k: Number of results (default 5)
+    """
+    if collection not in COLLECTIONS_INFO:
+        available = ", ".join(sorted(COLLECTIONS_INFO.keys()))
+        return f"Unknown collection '{collection}'. Available: {available}\n\nUse list_collections to see descriptions."
+
+    if collection == "sources":
+        try:
+            results = await search_sources(query, top_k=top_k, threshold=0.5)
+        except Exception as e:
+            return f"Sources search failed: {e}"
+        if not results:
+            return "No relevant results found in sources (knowledge base)."
+        lines = []
+        for i, r in enumerate(results, 1):
+            title = r.get("title") or r.get("filename", "Unknown")
+            section = r.get("section") or r.get("page") or ""
+            section_str = f" — {section}" if section else ""
+            text = r.get("text", "")[:600]
+            lines.append(f"[{i}] **{title}**{section_str}\n{text}")
+        return "\n\n---\n\n".join(lines)
+
+    elif collection == "notes":
+        try:
+            results = await _search_notes(query, top_k=top_k, threshold=0.45)
+        except Exception as e:
+            return f"Notes search failed: {e}"
+        if not results:
+            return "No relevant notes found."
+        lines = []
+        for i, r in enumerate(results, 1):
+            title = r.get("title") or r.get("filename", "Unknown")
+            filepath = r.get("filepath", "")
+            section = r.get("section", "")
+            label = title
+            if filepath and filepath != title:
+                label += f" ({filepath})"
+            if section:
+                label += f" — {section}"
+            text = r.get("text", "")[:600]
+            lines.append(f"[{i}] **{label}**\n{text}")
+        return "\n\n---\n\n".join(lines)
+
+    elif collection == "facts":
+        try:
+            results = await _search_facts(query, top_k=top_k)
+        except Exception as e:
+            return f"Facts search failed: {e}"
+        if not results:
+            return "No relevant facts found."
+        return "\n".join(f"- {r.get('text', '')}" for r in results)
+
+    elif collection == "procedures":
+        try:
+            results = await _search_procedures(query, top_k=top_k)
+        except Exception as e:
+            return f"Procedures search failed: {e}"
+        if not results:
+            return "No relevant procedures found."
+        return "\n".join(f"- {r.get('text', '')}" for r in results)
+
+    elif collection == "episodes":
+        try:
+            results = await _search_episodes(query, top_k=top_k)
+        except Exception as e:
+            return f"Episodes search failed: {e}"
+        if not results:
+            return "No relevant episodes found."
+        return "\n".join(f"- {r.get('text', '')}" for r in results)
+
+    return f"Unknown collection '{collection}'"
+
+
 DOWNLOADS_DIR = os.path.expanduser("~/Downloads")
 
 
@@ -414,7 +510,7 @@ async def download_file(url: str, filename: str = "", ingest: bool = False) -> s
 
 
 AUDIOBOOKBAY_URL = "https://audiobookbay.lu"
-AUDIOBOOKBAY_COOKIE = "PHPSESSID=vrrrei24pldf9dj3ujgabtrof3"
+AUDIOBOOKBAY_COOKIE = os.getenv("AUDIOBOOKBAY_COOKIE", "")
 
 
 async def _fetch_audiobook_detail(client: httpx.AsyncClient, url: str) -> dict:

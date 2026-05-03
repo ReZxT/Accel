@@ -7,6 +7,7 @@ interface PlayerStore {
   queue: Track[]
   queueIndex: number
   audioElement: HTMLAudioElement | null
+  isPlaying: boolean
 
   setAudioElement: (el: HTMLAudioElement) => void
   fetchNowPlaying: () => Promise<void>
@@ -23,8 +24,28 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   queue: [],
   queueIndex: 0,
   audioElement: null,
+  isPlaying: false,
 
-  setAudioElement: (el) => set({ audioElement: el }),
+  setAudioElement: (el) => {
+    if (get().audioElement === el) return
+    el.addEventListener('timeupdate', () => {
+      const { nowPlaying } = get()
+      if (nowPlaying && nowPlaying.source === 'browser') {
+        set({ nowPlaying: { ...nowPlaying, position: el.currentTime } })
+      }
+    })
+    el.addEventListener('play', () => set({ isPlaying: true }))
+    el.addEventListener('pause', () => set({ isPlaying: false }))
+    el.addEventListener('ended', () => {
+      const { queue, queueIndex } = get()
+      if (queueIndex < queue.length - 1) {
+        get().loadQueue(queue, queueIndex + 1)
+      } else {
+        set({ isPlaying: false })
+      }
+    })
+    set({ audioElement: el })
+  },
 
   fetchNowPlaying: async () => {
     const { queue } = get()

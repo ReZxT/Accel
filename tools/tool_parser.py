@@ -57,6 +57,20 @@ def parse_xml_tool_calls(content: str) -> list[dict]:
             val = pm.group(2).strip()
             args[pm.group(1)] = _safe_json(val, val)
         results.append({"name": name, "args": args, "id": make_id()})
+    if results:
+        return results
+
+    # Fallback: unclosed <tool_call> or <function= without proper wrapping
+    loose_fn = re.compile(
+        r"<function=([\w.:-]+)>([\s\S]*?)</function>"
+    )
+    for m in loose_fn.finditer(content):
+        name = m.group(1).strip()
+        args: dict[str, Any] = {}
+        for pm in param_re.finditer(m.group(2)):
+            val = pm.group(2).strip()
+            args[pm.group(1)] = _safe_json(val, val)
+        results.append({"name": name, "args": args, "id": make_id()})
 
     return results
 
@@ -65,4 +79,5 @@ def strip_tool_calls(content: str) -> str:
     """Remove all XML tool call blocks from text."""
     content = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", content)
     content = re.sub(r"<function_calls>[\s\S]*?</function_calls>", "", content)
+    content = re.sub(r"<function=[\w.:-]+>[\s\S]*?</function>", "", content)
     return content.strip()

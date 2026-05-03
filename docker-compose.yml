@@ -10,3 +10,246 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: always
+
+  llama-chat-gpu:
+    image: ubuntu:24.04
+    container_name: llama-chat-gpu
+    entrypoint: /opt/llama/llama-server
+    command:
+      - -m
+      - /models/Qwen3.5-9B-DeepSeek-V4-Flash.Q5_K_M.gguf
+      - --mmproj
+      - /models/Qwen3.5-9B.mmproj-Q8_0.gguf
+      - -c
+      - "65536"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - -ngl
+      - "99"
+      - --jinja
+      - --ubatch-size
+      - "256"
+      - -ctk
+      - turbo4
+      - -ctv
+      - turbo4
+      - -np
+      - "1"
+    environment:
+      - LD_LIBRARY_PATH=/opt/llama:/hostlib:/opt/rocm-6.3.1/lib:/opt/amdgpu/lib/x86_64-linux-gnu
+      - ROCM_PATH=/opt/rocm-6.3.1
+      - HSA_OVERRIDE_GFX_VERSION=10.3.0
+    volumes:
+      - /home/rezxt/ai-stack/llama-cpp-turboquant/build/bin:/opt/llama:ro
+      - /lib/x86_64-linux-gnu:/hostlib:ro
+      - /opt/rocm-6.3.1/lib:/opt/rocm-6.3.1/lib:ro
+      - /opt/amdgpu/lib:/opt/amdgpu/lib:ro
+      - /mnt/WD/Models:/models:ro
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+    ports:
+      - "8080:8080"
+    restart: "no"
+
+  curator:
+    image: ubuntu:24.04
+    container_name: curator
+    entrypoint: /opt/llama/llama-server
+    command:
+      - -m
+      - /models/Qwen3.5-0.8B-Q8_0.gguf
+      - -c
+      - "8192"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8082"
+      - -ngl
+      - "99"
+      - --jinja
+      - -np
+      - "1"
+    environment:
+      - LD_LIBRARY_PATH=/opt/llama:/hostlib:/opt/rocm-6.3.1/lib:/opt/amdgpu/lib/x86_64-linux-gnu
+      - ROCM_PATH=/opt/rocm-6.3.1
+      - HSA_OVERRIDE_GFX_VERSION=10.3.0
+    volumes:
+      - /home/rezxt/ai-stack/llama-cpp-turboquant/build/bin:/opt/llama:ro
+      - /lib/x86_64-linux-gnu:/hostlib:ro
+      - /opt/rocm-6.3.1/lib:/opt/rocm-6.3.1/lib:ro
+      - /opt/amdgpu/lib:/opt/amdgpu/lib:ro
+      - /mnt/WD/Models:/models:ro
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+    ports:
+      - "8082:8082"
+    restart: "no"
+
+  embeddings:
+    image: llama-cpu-local
+    container_name: embeddings
+    environment:
+      - LD_LIBRARY_PATH=/opt/llama
+    command:
+      - -m
+      - /models/bge-m3-q8_0.gguf
+      - -c
+      - "8192"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8081"
+      - -ngl
+      - "0"
+      - --embedding
+      - -b
+      - "2048"
+      - -ub
+      - "2048"
+    ports:
+      - "8081:8081"
+    volumes:
+      - /mnt/WD/Models:/models:ro
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant-dev
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ai-stack_qdrant_data:/qdrant/storage
+    restart: always
+
+  code-splitter:
+    build: /home/rezxt/ai-stack/code_splitter
+    container_name: code-splitter
+    ports:
+      - "9200:9200"
+    environment:
+      - CHAT_URL=http://172.17.0.1:8080
+    volumes:
+      - /home/rezxt/ai-stack/user_profile.json:/app/user_profile.json
+      - /mnt/WD/The Ideas:/app/vault:ro
+      - /home/rezxt/ai-stack/logs:/app/logs
+    restart: unless-stopped
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    ports:
+      - "8888:8080"
+    volumes:
+      - /home/rezxt/ai-stack/searxng:/etc/searxng:ro
+    restart: unless-stopped
+
+  playwright:
+    build: /home/rezxt/ai-stack/playwright_service
+    container_name: playwright
+    ports:
+      - "9300:9300"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:14
+    container_name: forgejo-dev
+    ports:
+      - "3000:3000"
+      - "2222:22"
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+    volumes:
+      - ai-stack_forgejo_data:/data
+    restart: always
+
+  minio:
+    image: minio/minio
+    container_name: minio-dev
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-admin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-changeme}
+    volumes:
+      - ai-stack_minio_data:/data
+    restart: always
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /home/rezxt/ai-stack/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ai-stack_ai-stack_prometheus_data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ai-stack_ai-stack_grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    ports:
+      - "9003:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ai-stack_ai-stack_portainer_data:/data
+    restart: always
+
+volumes:
+  ai-stack_qdrant_data:
+    external: true
+  ai-stack_forgejo_data:
+    external: true
+  ai-stack_minio_data:
+    external: true
+  ai-stack_ai-stack_prometheus_data:
+    external: true
+  ai-stack_ai-stack_grafana_data:
+    external: true
+  ai-stack_ai-stack_portainer_data:
+    external: true

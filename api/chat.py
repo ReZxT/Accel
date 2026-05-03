@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from router.classifier import classify
 from router.tier0 import classify_tier0
 from agents.chat_agent import run_chat
+from models.registry import registry
 
 router = APIRouter()
 
@@ -32,6 +33,8 @@ class ChatRequest(BaseModel):
     images: list[ImagePayload] = []
     files: list[FilePayload] = []
     voice_mode: bool = False
+    model_id: str | None = None
+    thinking_enabled: bool | None = None  # explicit override: True=force think, False=force non-think, None=model default
 
 
 async def _event_stream(chat_req: ChatRequest, http_req: Request):
@@ -64,6 +67,8 @@ async def _event_stream(chat_req: ChatRequest, http_req: Request):
                 voice_mode=chat_req.voice_mode,
                 cancel=cancel,
                 tier0=tier0,
+                model_id=chat_req.model_id,
+                thinking_enabled=chat_req.thinking_enabled,
             )
 
         elif route.route_family == "multimodal":
@@ -76,6 +81,8 @@ async def _event_stream(chat_req: ChatRequest, http_req: Request):
                 voice_mode=chat_req.voice_mode,
                 cancel=cancel,
                 tier0=tier0,
+                model_id=chat_req.model_id,
+                thinking_enabled=chat_req.thinking_enabled,
             )
 
         elif route.route_family == "preprocessed_text":
@@ -132,3 +139,75 @@ async def health():
 async def circuit_status():
     from circuit_breaker import all_status
     return all_status()
+
+
+@router.post("/command")
+async def handle_command(body: dict):
+    """Handle slash commands from the UI.
+
+    Returns structured result that the UI can use to update state.
+    Supported commands: /model <id>, /personality <name>, /voice on|off,
+    /clear, /cancel, /context, /status.
+    """
+    cmd = (body.get("command") or body.get("chatInput", "")).strip()
+    if not cmd.startswith("/"):
+        return {"error": "not a command"}
+
+    parts = cmd[1:].split(maxsplit=1)
+    action = parts[0].lower()
+    arg = parts[1] if len(parts) > 1 else ""
+
+    if action == "model":
+        if not arg:
+            available = [m["id"] for m in registry.active_state()["available"]]
+            return {
+                "type": "model_list",
+                "models": available,
+                "active": registry.chat.id,
+                "message": f"Active: {registry.chat.name}. Available: {', '.join(available)}",
+            }
+        try:
+            registry.set_active_chat(arg)
+            return {
+                "type": "model_switched",
+                "model_id": registry.chat.id,
+                "model_name": registry.chat.name,
+                "message": f"Switched to {registry.chat.name}",
+            }
+        except Exception:
+            return {"type": "error", "message": f"Unknown model: {arg}"}
+
+    elif action == "personality":
+        return {
+            "type": "info",
+            "message": "Personality switching via /personality not yet implemented. Use the preflight system.",
+        }
+
+    elif action == "voice":
+        if arg.lower() in ("on", "true", "1"):
+            from api.voice import _voice_enabled
+            return {"type": "voice_toggle", "enabled": True}
+        elif arg.lower() in ("off", "false", "0"):
+            return {"type": "voice_toggle", "enabled": False}
+        return {"type": "info", "message": "Usage: /voice on|off"}
+
+    elif action == "status":
+        from circuit_breaker import all_status
+        state = registry.active_state()
+        return {
+            "type": "status",
+            "model": f"{registry.chat.name} ({registry.chat.provider})",
+            "circuits": all_status(),
+        }
+
+    elif action == "context":
+        return {
+            "type": "context",
+            "model": f"{registry.chat.name} ({registry.chat.provider})",
+            "context_window": registry.chat.context_window,
+            "supports_thinking": registry.chat.supports_thinking,
+            "supports_vision": registry.chat.supports_vision,
+        }
+
+    else:
+        return {"type": "unknown", "command": action, "message": f"Unknown command: /{action}"}
