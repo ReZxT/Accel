@@ -2,7 +2,7 @@
 
 A local-first personal operating system for Intelligence Amplification — not a chatbot, but an organism with persistent memory, context-aware routing, agentic tool execution, voice interface, and a consistent cognitive profile across all domains.
 
-Built as a custom Python-native stack using **FastAPI + a custom agentic loop**. All inference runs locally via llama.cpp on an AMD GPU (ROCm). No cloud dependencies.
+Built as a custom Python-native stack using **FastAPI + a custom agentic loop**. Inference runs locally via llama.cpp on an AMD GPU (ROCm), with optional cloud API fallback (OpenAI, Anthropic) through a pluggable model registry.
 
 ---
 
@@ -31,10 +31,9 @@ Built as a custom Python-native stack using **FastAPI + a custom agentic loop**.
         direct_chat      preprocessed_text    multimodal
               │                 │                  │
               ▼                 ▼                  ▼
-        Pre-flight        code-splitter       Image preprocess
-        (personality      (AST/log/doc        (1280px max)
-         + thinking        chunking)
-         depth)
+        (pre-flight        code-splitter       Image preprocess
+         currently          (AST/log/doc        (1280px max)
+         disabled)          chunking)
               │                 │                  │
               └─────────────────┼──────────────────┘
                                 │
@@ -145,6 +144,25 @@ Wake word → STT → chat → TTS, runs as a background thread.
 
 ---
 
+## Model Registry
+
+Pluggable model definitions with runtime switching. Three roles — chat, curator, embeddings — each independently swappable across local and cloud providers.
+
+| ID | Provider | Context | Notes |
+|---|---|---|---|
+| `qwen-9b` | llama_cpp (local GPU) | 65K | Default chat. Vision, thinking, turbo4 KV cache. |
+| `qwen-0.8b` | llama_cpp (local GPU) | 8K | Default curator. Episode compression. |
+| `bge-m3` | llama_cpp (local CPU) | 8K | Default embeddings. 1024-dim (locked). |
+| `gpt-4o` | openai | 128K | Cloud fallback. Vision. Needs API key. |
+| `gpt-4.1` | openai | 1M | Cloud fallback. Vision. |
+| `claude-sonnet` | anthropic | 200K | Cloud fallback. Vision, extended thinking. |
+
+**Switching:** `/model gpt-4o` in chat, Settings UI selector, `CHAT_MODEL_ID` env var, or `PUT /models/active`. Custom models via `CUSTOM_MODELS` env var. Per-session override in SSE payload.
+
+**Backend dispatch:** llama_cpp and openai use OpenAI-compatible `/v1/chat/completions`; anthropic translates to Messages API with SSE event conversion.
+
+---
+
 ## Inference Stack
 
 Three models run simultaneously on a single RX 6700 XT (12 GB VRAM):
@@ -152,7 +170,7 @@ Three models run simultaneously on a single RX 6700 XT (12 GB VRAM):
 | Model | Role | VRAM | Speed |
 |---|---|---|---|
 | Qwen3.5-9B Q6_K | Chat + vision | ~9.5 GB | 40 t/s |
-| Qwen3.5-0.8B Q8_0 | Curator (preflight + episode compression) | ~0.8 GB | 163 t/s |
+| Qwen3.5-0.8B Q8_0 | Curator (episode compression) | ~0.8 GB | 163 t/s |
 | bge-m3 Q8_0 | Embeddings (1024-dim) | CPU | — |
 | **Total** | | **~10.5 GB** | |
 
@@ -160,7 +178,7 @@ Three models run simultaneously on a single RX 6700 XT (12 GB VRAM):
 
 **Vision:** mmproj projector loaded with the chat model — image inputs are preprocessed to 1280px max and passed through the vision encoder.
 
-**Curator:** 0.8B model handles personality routing and episode compression at 163 t/s on GPU. Preflight drops from 14s (old 9B CPU curator) to 0.2s. Uses raw `/completion` endpoint with `<think>\n</think>\n` injection to bypass broken `thinking_budget_tokens` on this model class.
+**Curator:** 0.8B model handles episode compression at 163 t/s on GPU. Pre-flight (personality + thinking depth) is currently disabled — personality defaults to "Casual", thinking budget is fixed 16384 tokens. Uses raw `/completion` endpoint with `<think>\n</think>\n` injection.
 
 ---
 
@@ -178,7 +196,7 @@ Health endpoint at `/health` reports circuit breaker status for all domains.
 
 ## Services
 
-All inference and storage runs locally. No cloud APIs.
+All inference and storage runs locally. Optional cloud API fallback via model registry.
 
 | Service | Port | Role |
 |---|---|---|
@@ -187,6 +205,7 @@ All inference and storage runs locally. No cloud APIs.
 | llama.cpp chat | 8080 | GPU (TurboQuant+, turbo4 KV, mmproj), 65K context |
 | llama.cpp embeddings | 8081 | CPU (Docker), bge-m3 1024-dim |
 | llama.cpp curator | 8082 | GPU (native), Qwen3.5-0.8B, 8K context |
+| llama.cpp mini | 8083 | CPU (Docker), Qwen3.5-0.8B, 32K ctx (backup) |
 | code-splitter | 9200 | AST chunking, log splitting, image preprocess, ingest |
 | SearXNG | 8888 | Web search backend |
 | Playwright | 9300 | Headless browser / screenshot |
