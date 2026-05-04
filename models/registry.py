@@ -92,7 +92,7 @@ DEFAULT_MODELS: list[ModelDef] = [
     ),
     ModelDef(
         id="qwen-0.8b",
-        name="Qwen3.5 0.8B (local GPU)",
+        name="Qwen3.5 0.8B (local CPU)",
         provider="llama_cpp",
         model_name="curator",
         endpoint=os.getenv("CURATOR_URL", "http://localhost:8082/v1"),

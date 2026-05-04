@@ -37,6 +37,7 @@ services:
       - turbo4
       - -np
       - "1"
+      - --no-mmproj-offload
     environment:
       - LD_LIBRARY_PATH=/opt/llama:/hostlib:/opt/rocm-6.3.1/lib:/opt/amdgpu/lib/x86_64-linux-gnu
       - ROCM_PATH=/opt/rocm-6.3.1
@@ -57,9 +58,10 @@ services:
     restart: "no"
 
   curator:
-    image: ubuntu:24.04
+    image: llama-cpu-local
     container_name: curator
-    entrypoint: /opt/llama/llama-server
+    environment:
+      - LD_LIBRARY_PATH=/opt/llama
     command:
       - -m
       - /models/Qwen3.5-0.8B-Q8_0.gguf
@@ -70,10 +72,36 @@ services:
       - --port
       - "8082"
       - -ngl
-      - "99"
+      - "0"
       - --jinja
       - -np
       - "1"
+    ports:
+      - "8082:8082"
+    volumes:
+      - /mnt/WD/Models:/models:ro
+    restart: "no"
+
+  embeddings:
+    image: ubuntu:24.04
+    container_name: embeddings
+    entrypoint: /opt/llama/llama-server
+    command:
+      - -m
+      - /models/bge-m3-q8_0.gguf
+      - -c
+      - "8192"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8081"
+      - -ngl
+      - "99"
+      - --embedding
+      - -b
+      - "2048"
+      - -ub
+      - "2048"
     environment:
       - LD_LIBRARY_PATH=/opt/llama:/hostlib:/opt/rocm-6.3.1/lib:/opt/amdgpu/lib/x86_64-linux-gnu
       - ROCM_PATH=/opt/rocm-6.3.1
@@ -90,34 +118,7 @@ services:
     group_add:
       - video
     ports:
-      - "8082:8082"
-    restart: "no"
-
-  embeddings:
-    image: llama-cpu-local
-    container_name: embeddings
-    environment:
-      - LD_LIBRARY_PATH=/opt/llama
-    command:
-      - -m
-      - /models/bge-m3-q8_0.gguf
-      - -c
-      - "8192"
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8081"
-      - -ngl
-      - "0"
-      - --embedding
-      - -b
-      - "2048"
-      - -ub
-      - "2048"
-    ports:
       - "8081:8081"
-    volumes:
-      - /mnt/WD/Models:/models:ro
     restart: unless-stopped
 
   qdrant:

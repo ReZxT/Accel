@@ -76,6 +76,7 @@ breakers = {
     "navidrome":  CircuitBreaker("navidrome",   failure_threshold=3, reset_timeout=120),
     "splitter":   CircuitBreaker("splitter",    failure_threshold=3, reset_timeout=60),
     "playwright": CircuitBreaker("playwright",  failure_threshold=2, reset_timeout=120),
+    "tools_qdrant": CircuitBreaker("tools_qdrant", failure_threshold=3, reset_timeout=60),
 }
 
 

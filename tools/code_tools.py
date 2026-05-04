@@ -551,6 +551,7 @@ _session_tools_used: dict[str, set[str]] = {}
 
 async def execute_tool(name: str, args: dict, session_id: str = "default") -> str | dict:
     """Execute a tool. Returns str for text results, dict for image results."""
+    from prefetch.tool_stats import tool_stats
     fn = TOOL_REGISTRY.get(name)
     if not fn:
         return f"Unknown tool: {name}"
@@ -558,6 +559,7 @@ async def execute_tool(name: str, args: dict, session_id: str = "default") -> st
     seen = _session_tools_used.setdefault(session_id, set())
     first_use = name not in seen and name != "get_tool_description"
     seen.add(name)
+    tool_stats.record_call(name, session_id)
 
     try:
         result = await fn(**args)

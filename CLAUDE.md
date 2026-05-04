@@ -18,7 +18,7 @@ A local-first personal operating system for Intelligence Amplification — not a
 
 **CPU:** Ryzen 5 5600X | **GPU:** RX6700XT (12GB VRAM, AMD — ROCm/HIP, not CUDA) | **RAM:** 32GB | **Storage:** ~3TB NVMe
 
-12GB VRAM fits Q6_K 9B + turbo4 KV cache + mmproj + 0.8B curator simultaneously (~10.5 GB). Always suggest ROCm-compatible approaches.
+12GB VRAM fits Q6_K 9B + turbo4 KV cache (~10 GB). Curator and mmproj run on CPU to keep VRAM free. Always suggest ROCm-compatible approaches.
 
 ## Running Stack
 
@@ -30,7 +30,7 @@ A local-first personal operating system for Intelligence Amplification — not a
 | Qdrant | 6333/6334 | Vector DB |
 | llama.cpp chat | 8080 | GPU (ngl=99), 65K ctx, turbo4 KV, mmproj vision — `Qwen3.5-9B-Q6_K.gguf` via llama-cpp-turboquant |
 | llama.cpp embeddings | 8081 | Docker (llama-cpu-local), bge-m3-q8_0, 8192 ctx |
-| llama.cpp curator | 8082 | Native GPU (ngl=99), `Qwen3.5-0.8B-Q8_0.gguf`, 8192 ctx, ~163 t/s |
+| llama.cpp curator | 8082 | Docker CPU (ngl=0), `Qwen3.5-0.8B-Q8_0.gguf`, 8192 ctx |
 | llama.cpp qwen-mini | 8083 | Docker (llama-cpu-local), Qwen3.5-0.8B-Q8_0, 32K ctx (backup/unused) |
 | code-splitter | 9200 | Docker (ai-stack compose) — tree-sitter splitting, log/text/chat, image preprocess |
 | SearXNG | 8888 | Docker — web search backend |
@@ -52,10 +52,10 @@ A local-first personal operating system for Intelligence Amplification — not a
   --mmproj /mnt/WD/Models/Qwen3.5-9B.mmproj-Q8_0.gguf \
   -c 65536 --host 0.0.0.0 --port 8080 \
   -ngl 99 --jinja --ubatch-size 256 \
-  -ctk turbo4 -ctv turbo4
+  -ctk turbo4 -ctv turbo4 --no-mmproj-offload
 ```
-**Start curator (native GPU):** `llama-server -m /mnt/WD/Models/Qwen3.5-0.8B-Q8_0.gguf -c 8192 --host 0.0.0.0 --port 8082 -ngl 99 --jinja`  
-Or use the Electron service dashboard → Chat Model → Start.  
+**Start curator:** runs via Docker Compose (`curator` service), CPU-only (ngl=0).  
+Or use the Electron service dashboard → Curator Model → Start.  
 **Run bootstrap:** `cd /home/rezxt/bootstrap && .venv/bin/python main.py`
 
 ## Models
@@ -63,10 +63,10 @@ Or use the Electron service dashboard → Chat Model → Start.
 All models at `/mnt/WD/Models/`.
 
 **Active:**
-- **Chat:** `Qwen3.5-9B-Q6_K.gguf` — clean base, 65K ctx, GPU (ngl=99), `--jinja`, turbo4 KV cache (~544 MB vs ~2 GB f16), mmproj vision, ubatch-size 256. Binary: `llama-cpp-turboquant`. ~40 t/s.
+- **Chat:** `Qwen3.5-9B-Q6_K.gguf` — clean base, 65K ctx, GPU (ngl=99), `--jinja`, turbo4 KV cache (~544 MB vs ~2 GB f16), mmproj vision (CPU via `--no-mmproj-offload`), ubatch-size 256. Binary: `llama-cpp-turboquant`. ~40 t/s.
 - **Embeddings:** `bge-m3-q8_0.gguf` — CPU, 1024-dim (locked in; swapping requires re-embedding all collections)
-- **Curator:** `Qwen3.5-0.8B-Q8_0.gguf` — GPU (ngl=99), port 8082, ~163 t/s. Uses raw `/completion` endpoint with `<think>\n</think>\n` injection (thinking_budget_tokens=0 broken in this model). Handles episode compression only. Pre-flight (personality + thinking depth) is currently disabled — personality defaults to "Casual", thinking budget is fixed 16384.
-- **Qwen Mini:** `Qwen3.5-0.8B-Q8_0.gguf` — CPU Docker, port 8083 (backup, unused while curator runs natively)
+- **Curator:** `Qwen3.5-0.8B-Q8_0.gguf` — CPU Docker (ngl=0), port 8082. Uses raw `/completion` endpoint with `<think>\n</think>\n` injection (thinking_budget_tokens=0 broken in this model). Handles episode compression only. Pre-flight (personality + thinking depth) is currently disabled — personality defaults to "Casual", thinking budget is fixed 16384.
+- **Qwen Mini:** `Qwen3.5-0.8B-Q8_0.gguf` — CPU Docker, port 8083 (backup, unused)
 
 **Previously used / available:**
 - `Qwen3.5-9B-Deckard-Claude-DIMOE-Uncensored-Heretic-Thinking.Q5_K_M.gguf` — DIMOE fine-tune with mmproj vision, THINKING variant
@@ -91,6 +91,13 @@ bootstrap/
 ├── models/         # registry.py (ModelDef, ModelRegistry), backends.py (llama_cpp, openai, anthropic)
 ├── tools/          # ~50 tools
 ├── memory/         # Qdrant clients: facts, episodes, sessions, sources, notes, profile, extraction
+│   └── hybrid.py   # shared search primitive: compute_query_vectors, hybrid_search, rerank_with_links
+├── prefetch/       # single-embed pre-fetch pipeline — tool retrieval, reranking, context assembly
+│   ├── pipeline.py       # run_prefetch() — fan-out to all collections, assemble PrefetchResult
+│   ├── tools_retrieval.py # tools Qdrant collection search, 4-signal reranking, build_tools_block
+│   ├── tool_stats.py     # in-memory usage/co-occurrence stats, JSON persistence
+│   ├── cache.py          # semantic cache stub (returns [])
+│   └── seed_tools.py     # CLI: seed tools collection from TOOL_DETAILS
 ├── curator/        # preflight.py (disabled), episode compression
 ├── voice/          # pipeline.py, stt.py, tts.py, listener.py, filter.py, models/
 ├── config.py
@@ -145,13 +152,13 @@ bootstrap/
 
 **Tier 1** (`router/classifier.py`, heuristic, no LLM): routes by content type — `direct_chat` (chat), `preprocessed_text` (code/logs/chat_dump → tree-sitter/log-aware splitting), `multimodal` (image preprocessing + optional retrieval + vision model).
 
-Circuit breakers wrap all 8 external service domains (Qdrant, splitter, chat_model, curator, embeddings, searxng, playwright, navidrome) with configurable failure thresholds and domain-specific fallbacks.
+Circuit breakers wrap all 9 external service domains (Qdrant, tools_qdrant, splitter, chat_model, curator, embeddings, searxng, playwright, navidrome) with configurable failure thresholds and domain-specific fallbacks.
 
 Stall detection fingerprints tool calls and response text (sliding window of 3). Nudges model on first repeat, force-stops on second.
 
 ## Memory Architecture
 
-**Qdrant collections (all active):** `facts`, `episodes`, `sessions`, `sources`, `notes`, `procedures` — plus `insights` and `memory_changelog` planned (Memory Consolidation).
+**Qdrant collections (all active):** `facts`, `episodes`, `sessions`, `sources`, `notes`, `procedures`, `tools` — plus `insights` and `memory_changelog` planned (Memory Consolidation).
 
 **Layers:**
 - **L0** Working memory → `sessions` (full history, persists across restarts)
@@ -161,7 +168,17 @@ Stall detection fingerprints tool calls and response text (sliding window of 3).
 - **L4** Procedural memory → `procedures` (interaction patterns; Procedure Extractor runs post-response)
 - **L5** User profile → `user_profile.json` (always injected; `context_state`: work/study/free)
 
-**Retrieval:** hybrid (dense + BM25 sparse via RRF fusion). Reranked `0.7×semantic + 0.3×recency` (decay 1/(1+days×0.05)). Facts threshold 0.55, sources 0.65. Auto-retrieval currently disabled — model uses search_* tools on demand instead of having results injected into system prompt.
+**Pre-fetch pipeline** (`prefetch/`): replaces the disabled auto-retrieval. On every message:
+1. Build a 512-token windowed query from current message + recent history + `[mode:context_state]` tag
+2. Single `embed()` + `sparse_vector()` call — one forward pass, reused for all collections
+3. `asyncio.gather` fans out to all 7 collections in parallel: facts, procedures, sources, notes, episodes, tools, cache (stub)
+4. **Tool retrieval**: `tools` Qdrant collection stores all 59 tool descriptions. Reranked by 4 signals: RRF score + recency of last use + session mode affinity + co-occurrence. Top 7 tools get full parameter specs injected; tools 8-20 get one-liners. Core tools (`get_tool_description`, `search_collection`) always present.
+5. **Link-boosted retrieval**: notes and sources use `rerank_with_links()` — if points have `links_to`/`linked_from` payload arrays, linked notes get a score boost. Different link types have different weights (explicit_wikilink > curator_confirmed > concept_overlap > temporal_sequence). Infrastructure ready; links populated by future memory manager.
+6. Results assembled into system prompt; falls back to static `TOOLS_SYSTEM_BLOCK` if Qdrant is down.
+
+**Tool usage stats**: in-memory dict + JSON file at `~/.config/accel/tool_stats.json`. Tracks per-tool usage counts, recency, and pairwise co-occurrence (computed per session at session end). Flushed to disk every 120s or on session end.
+
+**Retrieval:** hybrid (dense + BM25 sparse via RRF fusion). Reranked `0.7×semantic + 0.3×recency` (decay 1/(1+days×0.05)). Facts threshold 0.55, sources 0.65. Seed tools collection: `.venv/bin/python -m prefetch.seed_tools --force`.
 
 **Personalities:** Teacher, Coder, Philosopher, Casual, Critic, Mentor. Currently defaults to "Casual" — tier0 can force a personality for specific intents (e.g., "Coder" for code inputs). Pre-flight curator disabled; personality selection may be re-enabled later.
 
@@ -203,7 +220,7 @@ Design authority: `notes/` (Obsidian vault). Read when context is needed — the
 - **Skills system** — evolve L4 from passive recording into named executable patterns promoted through validated use
 - **Autonomous task execution** — goal → result; task state in Qdrant or SQLite; frictionless goal capture is the hard part
 - **Identity coherence** — cognitive profile: thinking style, decision values, overconfidence areas
-- **Memory consolidation** — background dedup + synthesis → `insights` collection; user approves before changes apply; design in `notes/Memory_Consolidation.md`
+- **Memory consolidation** — background dedup + synthesis → `insights` collection; user approves before changes apply; bidirectional linking infrastructure ready (`links_to`/`linked_from` payloads with `link_type`); design in `notes/Memory_Consolidation.md`
 - **Sandboxed code execution** — `bash` is currently unsandboxed; sandbox boundary TBD
 - **Note writing to Obsidian vault** — tool to write back to `notes/`
 - **Voice improvements** — Polish STT (fine-tuned Whisper), Polish TTS voice, wake-word tuning
@@ -269,7 +286,7 @@ Design authority: `notes/` (Obsidian vault). Read when context is needed — the
 - **Swappable model registry** — `models/registry.py` with `ModelDef` per provider (llama_cpp, openai, anthropic). Runtime switching via env, API, or UI. Per-session model override supported.
 - llama.cpp for local inference (ROCm GPU chat + curator, CPU embeddings); cloud API fallback for complex tasks
 - Qdrant for all vector storage; bge-m3 locked in at 1024-dim (re-embedding cost is high)
-- Separate model roles: chat (GPU, 65K ctx), curator (GPU, 8K ctx, 0.8B), embeddings (CPU)
+- Separate model roles: chat (GPU, 65K ctx), curator (CPU, 8K ctx, 0.8B), embeddings (CPU)
 - Router classifies input before any processing — never embed blindly
 - Memory layers are separate concepts from input modalities
 - Reasoning/thinking visible and passed to the UI separately from the final answer

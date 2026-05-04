@@ -11,14 +11,10 @@ from typing import AsyncGenerator
 
 log = logging.getLogger(__name__)
 
-from memory.facts import search_facts, search_procedures
-from memory.sources import search_sources
-from memory.notes import search_notes
 from memory.profile import get_profile, get_tool_settings
 from memory.sessions import load_session, save_session
 from memory.extraction import extract_after_response
 from memory.episodes import maybe_compress
-from curator.preflight import run_preflight  # kept for future re-enable
 from router.classifier import RouteDecision
 from router.tier0 import Tier0Result
 from tools.llm import chat_complete
@@ -28,6 +24,8 @@ from tools.code_tools import execute_tool, IRREVERSIBLE_TOOLS
 from tools import approval
 from config import config
 from models.registry import registry
+from prefetch.pipeline import run_prefetch, PrefetchContext
+from prefetch.tool_stats import tool_stats
 
 MAX_TOOL_ITERATIONS = 25
 TOOL_CONTINUE_BATCH = 25
@@ -377,14 +375,23 @@ async def run_chat(
     context_state = profile.get("context_state", "free")
     tool_settings = await get_tool_settings()
 
-    # Preflight disabled — model decides its own thinking depth
     personality = tier0.force_personality if (tier0 and tier0.force_personality) else "Casual"
 
-    # Auto-retrieval disabled — model has search tools when it needs context
-    facts, procedures, sources, notes = [], [], [], []
+    # Pre-fetch: single embed → fan out to all collections in parallel
+    skip = tier0 is not None and tier0.skip_retrieval
+    if skip:
+        from prefetch.pipeline import PrefetchResult
+        ctx = PrefetchResult.fallback()
+    else:
+        ctx = await run_prefetch(PrefetchContext(
+            message=chat_input,
+            history=chat_history,
+            context_state=context_state,
+            session_id=session_id,
+        ))
 
-    facts_text = "\n".join(f"- {f.get('text', '')}" for f in facts) or "None"
-    proc_text = "\n".join(f"- {p.get('text', '')}" for p in procedures) or "None"
+    facts_text = "\n".join(f"- {f.get('text', '')}" for f in ctx.facts) or "None"
+    proc_text = "\n".join(f"- {p.get('text', '')}" for p in ctx.procedures) or "None"
 
     def _fmt_source(s: dict) -> str:
         title = s.get("title", "")
@@ -393,8 +400,8 @@ async def run_chat(
         label = f"[{title} — {filepath}]" if filepath else (f"[{title}]" if title else "")
         return f"{label} {text}".strip()
 
-    sources_text = "\n".join(f"- {_fmt_source(s)}" for s in sources) or "None"
-    notes_text = "\n".join(f"- {_fmt_source(n)}" for n in notes) or "None"
+    sources_text = "\n".join(f"- {_fmt_source(s)}" for s in ctx.sources) or "None"
+    notes_text = "\n".join(f"- {_fmt_source(n)}" for n in ctx.notes) or "None"
     profile_text = json.dumps(
         {k: v for k, v in profile.items() if k not in ("context_state", "tool_settings")},
         indent=2,
@@ -409,7 +416,7 @@ async def run_chat(
         procedures=proc_text,
         notes=notes_text,
         sources=sources_text,
-        tools_block=TOOLS_SYSTEM_BLOCK,
+        tools_block=ctx.tools_block,
     )
     if voice_mode:
         system += "\n\n[VOICE MODE] Respond in 1-3 concise spoken sentences unless the user explicitly asks to explain or expand. No markdown, no bullet points, no code blocks. Natural spoken language only."
@@ -522,4 +529,5 @@ async def run_chat(
         new_history.append(final_assistant)
     await save_session(session_id, new_history)
     extract_after_response(chat_input, response_text)
+    tool_stats.record_session_end(session_id)
     log.info("run_chat done: session=%s  %.1fs  response_len=%d", session_id, time.monotonic() - req_t0, len(response_text))

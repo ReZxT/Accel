@@ -35,7 +35,7 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     dependsOn: [],
     autoStart: false,
     group: 'inference',
-    accelerator: 'gpu',
+    accelerator: 'cpu',
   },
   {
     id: 'llama-embeddings',
@@ -48,7 +48,7 @@ const DEFAULT_SERVICES: ServiceDef[] = [
     dependsOn: [],
     autoStart: false,
     group: 'inference',
-    accelerator: 'cpu',
+    accelerator: 'gpu',
   },
   {
     id: 'bootstrap',
