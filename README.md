@@ -31,9 +31,9 @@ Built as a custom Python-native stack using **FastAPI + a custom agentic loop**.
         direct_chat      preprocessed_text    multimodal
               │                 │                  │
               ▼                 ▼                  ▼
-        (pre-flight        code-splitter       Image preprocess
-         currently          (AST/log/doc        (1280px max)
-         disabled)          chunking)
+        (personality       code-splitter       Image preprocess
+         from session)      (AST/log/doc        (1280px max)
+                            chunking)
               │                 │                  │
               └─────────────────┼──────────────────┘
                                 │
@@ -105,7 +105,7 @@ All collections use **named vectors** (`dense` + `sparse`) with hybrid search: B
 
 | Route family | Text type | Pipeline |
 |---|---|---|
-| `direct_chat` | chat | Pre-flight + retrieval + chat model |
+| `direct_chat` | chat | Pre-fetch retrieval + chat model |
 | `preprocessed_text` | code | AST splitting → Coder personality |
 | `preprocessed_text` | logs | Log-aware chunking → Coder personality |
 | `preprocessed_text` | chat_dump | Speaker-turn splitting → no retrieval |
@@ -180,7 +180,7 @@ Chat model runs on the RX 6700 XT (12 GB VRAM). Curator and embeddings run on CP
 
 **Vision:** mmproj projector loaded with `--no-mmproj-offload` (runs in system RAM, not VRAM). Image inputs preprocessed to 1280px max.
 
-**Curator:** 0.8B model handles only episode compression on CPU. Pre-flight (personality + thinking depth) currently disabled — personality defaults to "Casual", thinking budget is fixed 16384 tokens.
+**Curator:** 0.8B model handles only episode compression on CPU. Personality defaults to "Casual", thinking budget is fixed 16384 tokens.
 
 ---
 
@@ -190,7 +190,7 @@ Chat model runs on the RX 6700 XT (12 GB VRAM). Curator and embeddings run on CP
 
 **Stall detection** in the agentic loop: fingerprints tool calls and response text via sliding window. Nudges the model on first repeat, force-stops on second.
 
-**Centralized logging:** daily rotating log files with decision-point logging across router, preflight, retrieval, and tool execution.
+**Centralized logging:** daily rotating log files with decision-point logging across router, pre-fetch, retrieval, and tool execution.
 
 Health endpoint at `/health` reports circuit breaker status for all domains.
 
@@ -254,7 +254,7 @@ bootstrap/
 │   ├── cache.py             # Semantic cache stub (ready for implementation)
 │   └── seed_tools.py        # CLI: seed tools collection from TOOL_DETAILS
 ├── curator/
-│   └── preflight.py         # Personality + thinking depth selection
+│   └── preflight.py         # Personality + thinking depth selection (disabled)
 ├── tools/
 │   ├── llm.py               # chat_complete, curator_complete, embed
 │   ├── web_tools.py         # search_web, fetch_url, screenshot_url
